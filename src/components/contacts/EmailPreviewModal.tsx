@@ -3,8 +3,9 @@
 import React from 'react';
 import { Mail, X, Check, Paperclip, AlertTriangle } from 'lucide-react';
 import { OutreachRecord } from '@/types';
-import { renderTemplate } from '@/lib/template';
+import { renderEmailBodyTemplate, renderTemplate } from '@/lib/template';
 import { useMailDesk } from '@/context/MailDeskContext';
+import { normalizeTemplateHtml, sanitizeEmailHtml } from '@/lib/email-html';
 
 interface EmailPreviewModalProps {
   record: OutreachRecord | null;
@@ -26,15 +27,17 @@ export function EmailPreviewModal({ record, isOpen, onClose }: EmailPreviewModal
     sender_name: profile.full_name || '',
     portfolio_url: profile.portfolio_url || '',
     linkedin_url: profile.linkedin_url || '',
+    job_link: record.job_link || '',
   });
 
-  const renderedBody = renderTemplate(record.body_override || template.body, {
+  const renderedBody = renderEmailBodyTemplate(record.body_override || template.body, {
     recipient_name: record.contact.name || '',
     company: record.company_override || record.contact.company || '',
     position: record.position_override || record.contact.position || '',
     sender_name: profile.full_name || '',
     portfolio_url: profile.portfolio_url || '',
     linkedin_url: profile.linkedin_url || '',
+    job_link: record.job_link || '',
   });
 
   return (
@@ -83,9 +86,10 @@ export function EmailPreviewModal({ record, isOpen, onClose }: EmailPreviewModal
 
           <div>
             <label className="font-semibold text-foreground block mb-1">Message Body:</label>
-            <pre className="whitespace-pre-wrap rounded-md border border-border bg-background p-4 font-sans text-xs text-foreground leading-relaxed">
-              {renderedBody.renderedText}
-            </pre>
+            <div
+              className="email-rich-content rounded-md border border-border bg-background p-4 font-sans text-xs text-foreground leading-relaxed"
+              dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(normalizeTemplateHtml(renderedBody.renderedText)) }}
+            />
           </div>
 
           <div className="flex items-center gap-2 text-xs text-muted-foreground">

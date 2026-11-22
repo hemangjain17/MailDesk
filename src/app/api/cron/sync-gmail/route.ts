@@ -7,6 +7,21 @@ import { google } from 'googleapis';
 
 export async function POST(req: NextRequest) {
   try {
+    const authHeader = req.headers.get('authorization');
+    const cronSecret = process.env.CRON_SECRET;
+    const isVercelCron = req.headers.get('x-vercel-cron') === '1';
+
+    if (
+      cronSecret &&
+      !isVercelCron &&
+      authHeader !== `Bearer ${cronSecret}` &&
+      req.nextUrl.searchParams.get('secret') !== cronSecret &&
+      req.headers.get('host') !== 'localhost:3000' &&
+      !req.headers.get('host')?.startsWith('127.0.0.1')
+    ) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     const supabaseAdmin = getSupabaseAdmin();
 
     // Query active connected accounts
@@ -224,4 +239,8 @@ export async function POST(req: NextRequest) {
     console.error('Sync Gmail error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+}
+
+export async function GET(req: NextRequest) {
+  return POST(req);
 }

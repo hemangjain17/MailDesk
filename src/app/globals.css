@@ -53,6 +53,31 @@ body {
   font-feature-settings: "rlig" 1, "calt" 1;
 }
 
+/* Rich email content (Tailwind's reset removes native list/link styling). */
+.email-rich-content ul {
+  list-style: disc;
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+}
+.email-rich-content ol {
+  list-style: decimal;
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+}
+.email-rich-content a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  cursor: pointer;
+}
+.email-rich-content blockquote {
+  border-left: 3px solid hsl(var(--border));
+  margin: 0.5rem 0;
+  padding-left: 0.75rem;
+}
+.email-rich-content p {
+  margin: 0.35rem 0;
+}
+
 /* Custom spreadsheet scrollbars */
 ::-webkit-scrollbar {
   width: 6px;

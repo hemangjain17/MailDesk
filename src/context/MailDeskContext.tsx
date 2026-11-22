@@ -28,7 +28,8 @@ import {
   initialTemplates,
 } from '@/lib/mock-data';
 import { parseBulkContacts, ParseResult } from '@/lib/parser';
-import { renderTemplate } from '@/lib/template';
+import { renderEmailBodyTemplate, renderTemplate } from '@/lib/template';
+import { htmlToPlainText, normalizeTemplateHtml, sanitizeEmailHtml } from '@/lib/email-html';
 import { addDays, format } from 'date-fns';
 import { toast } from 'sonner';
 
@@ -62,7 +63,10 @@ interface MailDeskContextType {
     followupDays?: number | null;
     attachments?: Array<{ filename: string; size_bytes?: number }>;
   }) => Promise<void>;
-  sendNowRecords: (recordIds: string[], options?: { followupDays?: number | null }) => Promise<void>;
+  sendNowRecords: (
+    recordIds: string[],
+    options?: { followupDays?: number | null; templateId?: string; isFollowup?: boolean }
+  ) => Promise<void>;
   processDueEmails: (forceAll?: boolean) => Promise<{ sent: number; failed: number }>;
   cancelScheduledJob: (jobId: string) => void;
   saveTemplate: (template: Partial<EmailTemplate>) => void;
@@ -146,22 +150,27 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!isLoaded) return;
     try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          profile,
-          emailAccount,
-          dateGroups,
-          selectedDateId,
-          contacts,
-          outreachRecords,
-          templates,
-          scheduledEmails,
-          messages,
-          followups,
-          notifications,
-        })
-      );
+      const statePayload = JSON.stringify({
+        profile,
+        emailAccount,
+        dateGroups,
+        selectedDateId,
+        contacts,
+        outreachRecords,
+        templates,
+        scheduledEmails,
+        messages,
+        followups,
+        notifications,
+      });
+
+      localStorage.setItem(STORAGE_KEY, statePayload);
+
+      // If connected to a real email account, preserve contacts, schedule, and history under their specific email key
+      if (emailAccount.email_address && emailAccount.connection_status === 'connected') {
+        const cleanEmail = emailAccount.email_address.toLowerCase().trim();
+        localStorage.setItem(`maildesk_account_${cleanEmail}`, statePayload);
+      }
     } catch (e) {
       console.warn('Failed to save MailDesk state', e);
     }
@@ -300,6 +309,7 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
         template_id: defaultTemplate?.id || null,
         company_override: null,
         position_override: null,
+        job_link: null,
         subject_override: null,
         body_override: null,
         current_status: 'Draft',
@@ -359,6 +369,7 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
       template_id: defaultTemplate?.id || null,
       company_override: null,
       position_override: null,
+      job_link: null,
       subject_override: null,
       body_override: null,
       current_status: 'Draft',
@@ -500,15 +511,17 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
         sender_name: profile.full_name || '',
         portfolio_url: profile.portfolio_url || '',
         linkedin_url: profile.linkedin_url || '',
+        job_link: rec.job_link || '',
       });
 
-      const renderedBody = renderTemplate(rec.body_override || chosenTemplate.body, {
+      const renderedBody = renderEmailBodyTemplate(rec.body_override || chosenTemplate.body, {
         recipient_name: rec.contact.name || '',
         company: rec.company_override || rec.contact.company || '',
         position: rec.position_override || rec.contact.position || '',
         sender_name: profile.full_name || '',
         portfolio_url: profile.portfolio_url || '',
         linkedin_url: profile.linkedin_url || '',
+        job_link: rec.job_link || '',
       });
 
       const jobId = `job_${Date.now()}_${index}`;
@@ -518,7 +531,7 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
         outreach_record_id: rec.id,
         email_account_id: emailAccount.id,
         approved_subject: renderedSubj.renderedText,
-        approved_body: renderedBody.renderedText,
+        approved_body: sanitizeEmailHtml(normalizeTemplateHtml(renderedBody.renderedText)),
         approved_attachments: attachments,
         scheduled_at: sendTime,
         status: 'pending',
@@ -566,6 +579,7 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
             recipientName: j.outreach_record?.contact.name || '',
             company: j.outreach_record?.company_override || j.outreach_record?.contact.company || '',
             position: j.outreach_record?.position_override || j.outreach_record?.contact.position || '',
+            jobLink: j.outreach_record?.job_link || '',
             subject: j.approved_subject,
             body: j.approved_body,
             scheduledAt: j.scheduled_at,
@@ -601,32 +615,58 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
     );
   };
 
-  const sendNowRecords = async (recordIds: string[], options?: { followupDays?: number | null }) => {
-    const defaultTemplate = templates[0];
+  const sendNowRecords = async (
+    recordIds: string[],
+    options?: { followupDays?: number | null; templateId?: string; isFollowup?: boolean }
+  ) => {
+    const defaultTemplate = templates.find(template => template.id === options?.templateId) || templates[0];
     const newMessages: EmailMessage[] = [];
     const newNotifications: NotificationItem[] = [];
     const newFollowups: FollowupReminder[] = [];
 
     let sentCount = 0;
     let failedCount = 0;
+    const successfulFollowupRecordIds = new Set<string>();
 
     for (const recId of recordIds) {
       const r = outreachRecords.find(item => item.id === recId);
       if (!r) continue;
 
-      const subj = renderTemplate(r.subject_override || defaultTemplate.subject, {
+      const subjectSource = options?.isFollowup
+        ? defaultTemplate.subject
+        : r.subject_override || defaultTemplate.subject;
+      const bodySource = options?.isFollowup
+        ? defaultTemplate.body
+        : r.body_override || defaultTemplate.body;
+
+      const subj = renderTemplate(subjectSource, {
         recipient_name: r.contact.name || '',
         company: r.company_override || r.contact.company || '',
         position: r.position_override || r.contact.position || '',
         sender_name: profile.full_name || '',
+        job_link: r.job_link || '',
       }).renderedText;
 
-      const body = renderTemplate(r.body_override || defaultTemplate.body, {
+      const body = renderEmailBodyTemplate(bodySource, {
         recipient_name: r.contact.name || '',
         company: r.company_override || r.contact.company || '',
         position: r.position_override || r.contact.position || '',
         sender_name: profile.full_name || '',
+        portfolio_url: profile.portfolio_url || '',
+        linkedin_url: profile.linkedin_url || '',
+        job_link: r.job_link || '',
       }).renderedText;
+      const bodyHtml = sanitizeEmailHtml(normalizeTemplateHtml(body));
+      const bodyText = htmlToPlainText(bodyHtml);
+      const originalMessage = options?.isFollowup
+        ? messages
+            .filter(message => message.outreach_record_id === r.id && message.direction === 'outgoing')
+            .sort(
+              (a, b) =>
+                new Date(a.sent_at || a.created_at).getTime() -
+                new Date(b.sent_at || b.created_at).getTime()
+            )[0]
+        : undefined;
 
       // Validate email format before sending
       if (!r.contact.email || !r.contact.email.includes('@') || !r.contact.email.includes('.')) {
@@ -656,8 +696,13 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
           body: JSON.stringify({
             to: r.contact.email,
             subject: subj,
-            textBody: body,
+            textBody: bodyText,
+            htmlBody: bodyHtml,
             outreachRecordId: r.id,
+            replyToOriginal: options?.isFollowup === true,
+            replyToMessageId: originalMessage?.gmail_message_id || undefined,
+            replyToThreadId: originalMessage?.gmail_thread_id || undefined,
+            originalSubject: originalMessage?.subject || undefined,
           }),
         });
 
@@ -667,6 +712,7 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
         }
 
         sentCount++;
+        if (options?.isFollowup) successfulFollowupRecordIds.add(r.id);
         const sentIso = new Date().toISOString();
         const msgId = `msg_out_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
         newMessages.push({
@@ -677,12 +723,12 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
           direction: 'outgoing',
           sender_email: emailAccount.email_address,
           recipient_email: r.contact.email,
-          subject: subj,
-          body_html: `<p>${body.replace(/\n/g, '<br/>')}</p>`,
-          body_text: body,
+          subject: resData.subject || subj,
+          body_html: bodyHtml,
+          body_text: bodyText,
           gmail_message_id: resData.gmailMessageId || `gm_${Date.now()}`,
           gmail_thread_id: resData.gmailThreadId || `th_${Date.now()}`,
-          internet_message_id: `<${Date.now()}@mail.gmail.com>`,
+          internet_message_id: resData.internetMessageId || `<${Date.now()}@mail.gmail.com>`,
           sent_at: sentIso,
           received_at: null,
           created_at: sentIso,
@@ -707,7 +753,11 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
                   ...row,
                   current_status: 'Sent',
                   sent_at: sentIso,
-                  followup_days: options?.followupDays !== undefined ? (options.followupDays || 5) : row.followup_days,
+                  followup_days: options?.isFollowup
+                    ? row.followup_days
+                    : options?.followupDays !== undefined
+                      ? (options.followupDays || 5)
+                      : row.followup_days,
                   updated_at: sentIso,
                 }
               : row
@@ -724,7 +774,9 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
         );
 
         // Setup follow-up reminder if requested
-        const effectiveFollowupDays = options?.followupDays ?? r.followup_days;
+        const effectiveFollowupDays = options?.isFollowup
+          ? null
+          : options?.followupDays ?? r.followup_days;
         if (effectiveFollowupDays) {
           newFollowups.push({
             id: `fol_${Date.now()}_${r.id}`,
@@ -775,6 +827,16 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
     }
     if (newFollowups.length > 0) {
       setFollowups(prev => [...newFollowups, ...prev]);
+    }
+    if (successfulFollowupRecordIds.size > 0) {
+      const completedAt = new Date().toISOString();
+      setFollowups(prev =>
+        prev.map(reminder =>
+          successfulFollowupRecordIds.has(reminder.outreach_record_id) && reminder.status !== 'completed'
+            ? { ...reminder, status: 'completed', completed_at: completedAt }
+            : reminder
+        )
+      );
     }
   };
 
@@ -832,13 +894,16 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
+        const bodyHtml = sanitizeEmailHtml(normalizeTemplateHtml(job.approved_body));
+        const bodyText = htmlToPlainText(bodyHtml);
         const sendRes = await fetch('/api/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             to: recipientEmail,
             subject: job.approved_subject,
-            textBody: job.approved_body,
+            textBody: bodyText,
+            htmlBody: bodyHtml,
             outreachRecordId: job.outreach_record_id,
           }),
         });
@@ -887,8 +952,8 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
           sender_email: emailAccount.email_address,
           recipient_email: recipientEmail,
           subject: job.approved_subject,
-          body_html: `<p>${job.approved_body.replace(/\n/g, '<br/>')}</p>`,
-          body_text: job.approved_body,
+          body_html: bodyHtml,
+          body_text: bodyText,
           gmail_message_id: sentMsgId,
           gmail_thread_id: resData.gmailThreadId || `th_${Date.now()}`,
           internet_message_id: `<${Date.now()}@mail.gmail.com>`,
@@ -1072,8 +1137,11 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
   };
 
   const connectRealAccount = useCallback((email: string, name?: string, userId?: string) => {
+    const cleanEmail = email.toLowerCase().trim();
+    const accountKey = `maildesk_account_${cleanEmail}`;
+
     // If already connected to this email, do not re-run state initialization
-    if (emailAccount.connection_status === 'connected' && emailAccount.email_address === email) {
+    if (emailAccount.connection_status === 'connected' && emailAccount.email_address?.toLowerCase().trim() === cleanEmail) {
       return;
     }
 
@@ -1100,7 +1168,44 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
       linkedin_url: profile.linkedin_url || '',
     };
 
-    // Clean start from scratch for real connected outreach:
+    // Check if we have saved data for this specific email account
+    const savedAccountData = typeof window !== 'undefined' ? localStorage.getItem(accountKey) : null;
+    if (savedAccountData) {
+      try {
+        const parsed = JSON.parse(savedAccountData);
+        setEmailAccount(newAccount);
+        if (parsed.profile) setProfile(parsed.profile);
+        if (parsed.dateGroups && parsed.dateGroups.length > 0) setDateGroups(parsed.dateGroups);
+        if (parsed.selectedDateId) setSelectedDateId(parsed.selectedDateId);
+        if (parsed.contacts) setContacts(parsed.contacts);
+        if (parsed.templates) setTemplates(parsed.templates);
+        if (parsed.messages) setMessages(parsed.messages);
+        if (parsed.followups) setFollowups(parsed.followups);
+        if (parsed.notifications) setNotifications(parsed.notifications);
+
+        if (parsed.outreachRecords) {
+          const rawRecords: OutreachRecord[] = parsed.outreachRecords;
+          const reconciledRecords = rawRecords.map(r => {
+            if (r.sent_at && r.current_status === 'Scheduled') {
+              return { ...r, current_status: 'Sent' as OutreachStatus };
+            }
+            return r;
+          });
+          setOutreachRecords(reconciledRecords);
+        }
+
+        if (parsed.scheduledEmails) {
+          setScheduledEmails(parsed.scheduledEmails);
+        }
+
+        toast.success(`Welcome back, ${email}! Restored your contacts, schedule, and sent history.`);
+        return;
+      } catch (e) {
+        console.warn('Failed to parse saved account state', e);
+      }
+    }
+
+    // Fresh start only if this email has never been used before
     const todayStr = format(new Date(), 'yyyy-MM-dd');
     const todayLabel = format(new Date(), 'd MMM yyyy');
     const cleanDateGroup: DateGroup = {
@@ -1134,7 +1239,7 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
       },
     ]);
 
-    toast.success(`Connected as ${email}. Demo data cleared!`);
+    toast.success(`Connected as ${email}. Fresh outreach workspace initialized!`);
   }, [emailAccount.connection_status, emailAccount.email_address, profile.timezone, profile.default_followup_days, profile.portfolio_url, profile.linkedin_url]);
 
   const disconnectGmail = () => {

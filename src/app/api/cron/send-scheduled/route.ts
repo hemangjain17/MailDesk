@@ -3,18 +3,21 @@ import { getSupabaseAdmin } from '@/lib/supabase/admin';
 import { decryptToken } from '@/lib/crypto';
 import { buildRawMimeMessage, getGoogleOAuth2Client } from '@/lib/gmail';
 import { google } from 'googleapis';
+import { htmlToPlainText, normalizeTemplateHtml, sanitizeEmailHtml } from '@/lib/email-html';
 
 export async function POST(req: NextRequest) {
   try {
     const authHeader = req.headers.get('authorization');
     const cronSecret = process.env.CRON_SECRET;
+    const isVercelCron = req.headers.get('x-vercel-cron') === '1';
 
-    // Allow authorization via Bearer token OR internal app query param ?secret=... OR local development
+    // Allow authorization via Bearer token OR Vercel Cron header OR internal app query param ?secret=... OR local development
     const searchParams = req.nextUrl.searchParams;
     const querySecret = searchParams.get('secret');
 
     if (
       cronSecret &&
+      !isVercelCron &&
       authHeader !== `Bearer ${cronSecret}` &&
       querySecret !== cronSecret &&
       req.headers.get('host') !== 'localhost:3000' &&
@@ -81,12 +84,16 @@ export async function POST(req: NextRequest) {
 
           const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
+          const htmlBody = sanitizeEmailHtml(normalizeTemplateHtml(job.approved_body));
+          const textBody = htmlToPlainText(htmlBody);
+
           // Build raw message
           const rawMessage = buildRawMimeMessage({
             from: account.email_address,
             to: recipientEmail,
             subject: job.approved_subject,
-            textBody: job.approved_body,
+            textBody,
+            htmlBody,
           });
 
           // Send via Gmail API
@@ -111,7 +118,8 @@ export async function POST(req: NextRequest) {
               sender_email: account.email_address,
               recipient_email: recipientEmail,
               subject: job.approved_subject,
-              body_text: job.approved_body,
+              body_html: htmlBody,
+              body_text: textBody,
               gmail_message_id: gmailMessageId,
               gmail_thread_id: gmailThreadId,
               sent_at: new Date().toISOString(),
@@ -182,4 +190,8 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+export async function GET(req: NextRequest) {
+  return POST(req);
 }

@@ -71,6 +71,7 @@ export interface OutreachRecord {
   template_id: string | null;
   company_override: string | null;
   position_override: string | null;
+  job_link?: string | null;
   subject_override: string | null;
   body_override: string | null;
   current_status: OutreachStatus;
@@ -163,4 +164,5 @@ export interface TemplateVariables {
   sender_email?: string;
   portfolio_url?: string;
   linkedin_url?: string;
+  job_link?: string;
 }

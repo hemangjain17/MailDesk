@@ -50,6 +50,39 @@ export function renderTemplate(
 }
 
 /**
+ * Renders an email body and turns standalone {{job_link}} placeholders into
+ * clickable anchors. Existing authored links are left unchanged.
+ */
+export function renderEmailBodyTemplate(
+  templateText: string,
+  variables: TemplateVariables
+): RenderResult {
+  if (!templateText || !variables.job_link) return renderTemplate(templateText, variables);
+  const normalizedJobLink = /^https?:\/\//i.test(variables.job_link)
+    ? variables.job_link
+    : `https://${variables.job_link}`;
+
+  const anchorRegex = /<a\b[^>]*>[\s\S]*?<\/a>/gi;
+  let cursor = 0;
+  let linkedTemplate = '';
+  let match: RegExpExecArray | null;
+
+  while ((match = anchorRegex.exec(templateText)) !== null) {
+    linkedTemplate += templateText
+      .slice(cursor, match.index)
+      .replace(/\{\{job_link\}\}/g, '<a href="{{job_link}}">{{job_link}}</a>');
+    linkedTemplate += match[0];
+    cursor = match.index + match[0].length;
+  }
+
+  linkedTemplate += templateText
+    .slice(cursor)
+    .replace(/\{\{job_link\}\}/g, '<a href="{{job_link}}">{{job_link}}</a>');
+
+  return renderTemplate(linkedTemplate, { ...variables, job_link: normalizedJobLink });
+}
+
+/**
  * Validates that an outreach message is ready to be scheduled or sent.
  * Checks for unresolved placeholders.
  */

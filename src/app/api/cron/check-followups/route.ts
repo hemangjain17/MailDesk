@@ -5,8 +5,16 @@ export async function POST(req: NextRequest) {
   try {
     const authHeader = req.headers.get('authorization');
     const cronSecret = process.env.CRON_SECRET;
+    const isVercelCron = req.headers.get('x-vercel-cron') === '1';
 
-    if (cronSecret && authHeader !== `Bearer ${cronSecret}`) {
+    if (
+      cronSecret &&
+      !isVercelCron &&
+      authHeader !== `Bearer ${cronSecret}` &&
+      req.nextUrl.searchParams.get('secret') !== cronSecret &&
+      req.headers.get('host') !== 'localhost:3000' &&
+      !req.headers.get('host')?.startsWith('127.0.0.1')
+    ) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -62,4 +70,8 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     return NextResponse.json({ success: false, error: error.message }, { status: 500 });
   }
+}
+
+export async function GET(req: NextRequest) {
+  return POST(req);
 }

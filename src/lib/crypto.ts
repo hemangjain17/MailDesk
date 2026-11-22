@@ -5,7 +5,7 @@ const IV_LENGTH = 16;
 const TAG_LENGTH = 16;
 
 function getEncryptionKey(): Buffer {
-  const secret = process.env.TOKEN_ENCRYPTION_KEY || 'default_dev_secret_key_32_bytes_long_12345';
+  const secret = process.env.TOKEN_ENCRYPTION_KEY || 'maildesk_universal_secure_encryption_key_v1';
   return crypto.createHash('sha256').update(secret).digest();
 }
 
@@ -13,6 +13,7 @@ function getEncryptionKey(): Buffer {
  * Encrypts sensitive string (e.g. OAuth refresh token) using AES-256-GCM
  */
 export function encryptToken(plainText: string): string {
+  if (!plainText) return '';
   const key = getEncryptionKey();
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
@@ -27,24 +28,33 @@ export function encryptToken(plainText: string): string {
 }
 
 /**
- * Decrypts string encrypted with encryptToken
+ * Decrypts string encrypted with encryptToken.
+ * Gracefully returns plainText if string is not encrypted.
  */
 export function decryptToken(encryptedPayload: string): string {
+  if (!encryptedPayload) return '';
+
   const parts = encryptedPayload.split(':');
+  // If not formatted as iv:tag:cipher, assume plaintext token
   if (parts.length !== 3) {
-    throw new Error('Invalid encrypted token format');
+    return encryptedPayload;
   }
 
-  const [ivHex, tagHex, encryptedHex] = parts;
-  const key = getEncryptionKey();
-  const iv = Buffer.from(ivHex, 'hex');
-  const tag = Buffer.from(tagHex, 'hex');
+  try {
+    const [ivHex, tagHex, encryptedHex] = parts;
+    const key = getEncryptionKey();
+    const iv = Buffer.from(ivHex, 'hex');
+    const tag = Buffer.from(tagHex, 'hex');
 
-  const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
-  decipher.setAuthTag(tag);
+    const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+    decipher.setAuthTag(tag);
 
-  let decrypted = decipher.update(encryptedHex, 'hex', 'utf8');
-  decrypted += decipher.final('utf8');
+    let decrypted = decipher.update(encryptedHex, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
 
-  return decrypted;
+    return decrypted;
+  } catch {
+    // If decryption fails, fallback to raw payload
+    return encryptedPayload;
+  }
 }

@@ -3,8 +3,9 @@
 import React, { useState, useMemo } from 'react';
 import { Calendar, Clock, Sparkles, Check, AlertCircle, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useMailDesk } from '@/context/MailDeskContext';
-import { renderTemplate } from '@/lib/template';
+import { renderEmailBodyTemplate, renderTemplate } from '@/lib/template';
 import { format, addDays } from 'date-fns';
+import { normalizeTemplateHtml, sanitizeEmailHtml } from '@/lib/email-html';
 
 interface ScheduleModalProps {
   isOpen: boolean;
@@ -54,15 +55,17 @@ export function ScheduleModal({ isOpen, onClose, selectedRecordIds }: ScheduleMo
         sender_name: profile.full_name || '',
         portfolio_url: profile.portfolio_url || '',
         linkedin_url: profile.linkedin_url || '',
+        job_link: rec.job_link || '',
       });
 
-      const body = renderTemplate(rec.body_override || chosenTemplate.body, {
+      const body = renderEmailBodyTemplate(rec.body_override || chosenTemplate.body, {
         recipient_name: rec.contact.name || '',
         company: rec.company_override || rec.contact.company || '',
         position: rec.position_override || rec.contact.position || '',
         sender_name: profile.full_name || '',
         portfolio_url: profile.portfolio_url || '',
         linkedin_url: profile.linkedin_url || '',
+        job_link: rec.job_link || '',
       });
 
       const hasMissing = subj.hasUnresolvedPlaceholders || body.hasUnresolvedPlaceholders;
@@ -264,9 +267,10 @@ export function ScheduleModal({ isOpen, onClose, selectedRecordIds }: ScheduleMo
                 </div>
                 <div>
                   <span className="font-medium text-muted-foreground block mb-1">Rendered Message Body:</span>
-                  <pre className="whitespace-pre-wrap rounded bg-muted/40 p-3 font-sans text-xs text-foreground border border-border leading-relaxed">
-                    {currentPreview.body}
-                  </pre>
+                  <div
+                    className="email-rich-content rounded bg-muted/40 p-3 font-sans text-xs text-foreground border border-border leading-relaxed"
+                    dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(normalizeTemplateHtml(currentPreview.body)) }}
+                  />
                 </div>
                 <div className="text-[11px] text-muted-foreground flex items-center gap-1">
                   <Sparkles className="h-3 w-3 text-primary" />

@@ -3,16 +3,61 @@
 import React, { useState } from 'react';
 import { useMailDesk } from '@/context/MailDeskContext';
 import { formatDateTime } from '@/lib/utils';
-import { CalendarCheck, Clock, CheckCircle, Bell, ArrowRight } from 'lucide-react';
+import { CalendarCheck, Clock, CheckCircle, Send, Mail } from 'lucide-react';
 
 export default function FollowupsPage() {
-  const { followups, outreachRecords, snoozeFollowup, completeFollowup, profile } =
+  const { followups, outreachRecords, templates, snoozeFollowup, completeFollowup, sendNowRecords, profile } =
     useMailDesk();
 
   const [activeTab, setActiveTab] = useState<'due' | 'completed'>('due');
+  const [selectedReminderIds, setSelectedReminderIds] = useState<string[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [isSending, setIsSending] = useState(false);
 
   const pendingReminders = followups.filter(f => f.status === 'pending' || f.status === 'snoozed');
   const completedReminders = followups.filter(f => f.status === 'completed');
+  const allPendingSelected =
+    pendingReminders.length > 0 && pendingReminders.every(reminder => selectedReminderIds.includes(reminder.id));
+
+  const toggleReminder = (reminderId: string) => {
+    setSelectedReminderIds(previous =>
+      previous.includes(reminderId)
+        ? previous.filter(id => id !== reminderId)
+        : [...previous, reminderId]
+    );
+  };
+
+  const toggleAllPending = () => {
+    setSelectedReminderIds(
+      allPendingSelected ? [] : pendingReminders.map(reminder => reminder.id)
+    );
+  };
+
+  const sendSelectedFollowups = async () => {
+    if (!selectedTemplateId || selectedReminderIds.length === 0) return;
+
+    const recordIds = Array.from(
+      new Set(
+        pendingReminders
+          .filter(reminder => selectedReminderIds.includes(reminder.id))
+          .map(reminder => reminder.outreach_record_id)
+      )
+    );
+
+    if (recordIds.length === 0) return;
+
+    setIsSending(true);
+    try {
+      await sendNowRecords(recordIds, {
+        templateId: selectedTemplateId,
+        isFollowup: true,
+        followupDays: null,
+      });
+      setSelectedReminderIds([]);
+    } finally {
+      setIsSending(false);
+    }
+  };
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -49,6 +94,62 @@ export default function FollowupsPage() {
         </div>
       </div>
 
+      {activeTab === 'due' && (
+        <section className="rounded-xl border border-border bg-card p-4 shadow-sm">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <Mail className="h-4 w-4 text-primary" />
+                Send follow-ups
+              </h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Select reminders and a template. Each follow-up is sent as a reply in its original Gmail thread.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+              <label className="space-y-1">
+                <span className="block text-[11px] font-medium text-muted-foreground">Follow-up template</span>
+                <select
+                  value={selectedTemplateId}
+                  onChange={event => setSelectedTemplateId(event.target.value)}
+                  className="min-w-56 rounded-md border border-input bg-background px-3 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                >
+                  <option value="">Choose a template...</option>
+                  {templates.map(template => (
+                    <option key={template.id} value={template.id}>
+                      {template.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <button
+                type="button"
+                onClick={sendSelectedFollowups}
+                disabled={!selectedTemplateId || selectedReminderIds.length === 0 || isSending}
+                className="flex items-center justify-center gap-1.5 rounded-md bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Send className="h-3.5 w-3.5" />
+                {isSending ? 'Sending...' : `Reply with Follow-up (${selectedReminderIds.length})`}
+              </button>
+            </div>
+          </div>
+
+          {pendingReminders.length > 0 && (
+            <label className="mt-3 inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-foreground">
+              <input
+                type="checkbox"
+                checked={allPendingSelected}
+                onChange={toggleAllPending}
+                className="h-4 w-4 rounded border-input text-primary focus:ring-primary"
+              />
+              Select all due and upcoming reminders
+            </label>
+          )}
+        </section>
+      )}
+
       {/* Reminders List */}
       <div className="space-y-3">
         {activeTab === 'due' && pendingReminders.length === 0 && (
@@ -58,7 +159,8 @@ export default function FollowupsPage() {
         )}
 
         {(activeTab === 'due' ? pendingReminders : completedReminders).map(fol => {
-          const outreach = fol.outreach_record;
+          const outreach =
+            outreachRecords.find(record => record.id === fol.outreach_record_id) || fol.outreach_record;
           const contact = outreach?.contact;
 
           return (
@@ -66,7 +168,17 @@ export default function FollowupsPage() {
               key={fol.id}
               className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 rounded-xl border border-border bg-card p-4 hover:border-primary/40 transition-all shadow-sm"
             >
-              <div className="space-y-1">
+              <div className="flex items-start gap-3">
+                {activeTab === 'due' && (
+                  <input
+                    type="checkbox"
+                    checked={selectedReminderIds.includes(fol.id)}
+                    onChange={() => toggleReminder(fol.id)}
+                    aria-label={`Select follow-up for ${contact?.name || contact?.email || 'contact'}`}
+                    className="mt-1 h-4 w-4 shrink-0 cursor-pointer rounded border-input text-primary focus:ring-primary"
+                  />
+                )}
+                <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-sm text-foreground">
                     {contact?.name || contact?.email || 'Candidate Outreach'}
@@ -81,6 +193,7 @@ export default function FollowupsPage() {
                 <div className="text-[11px] text-muted-foreground flex items-center gap-1.5 pt-1">
                   <Clock className="h-3 w-3 text-amber-500" />
                   Target due date: <span className="font-medium text-foreground">{formatDateTime(fol.due_at)}</span>
+                </div>
                 </div>
               </div>
 
@@ -100,7 +213,10 @@ export default function FollowupsPage() {
                     Snooze 3 Days
                   </button>
                   <button
-                    onClick={() => completeFollowup(fol.id)}
+                    onClick={() => {
+                      completeFollowup(fol.id);
+                      setSelectedReminderIds(previous => previous.filter(id => id !== fol.id));
+                    }}
                     className="flex items-center gap-1 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 transition-colors shadow-sm"
                   >
                     <CheckCircle className="h-3.5 w-3.5" />

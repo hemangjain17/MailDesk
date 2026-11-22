@@ -97,10 +97,27 @@ export function buildRawMimeMessage(options: ComposeEmailOptions): string {
 }
 
 /**
+ * Resolves the active base URL for OAuth callbacks and links.
+ * Checks NEXT_PUBLIC_APP_URL, Vercel production URL, Vercel deployment URL, or falls back to localhost.
+ */
+export function getAppUrl(): string {
+  if (process.env.NEXT_PUBLIC_APP_URL) {
+    return process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, '');
+  }
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  return 'http://localhost:3000';
+}
+
+/**
  * Creates an authorized OAuth2 client for Google APIs
  */
 export function getGoogleOAuth2Client() {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+  const appUrl = getAppUrl();
   return new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,

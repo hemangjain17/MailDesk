@@ -69,6 +69,8 @@ LinkedIn: {{linkedin_url}}`,
 
 Following up briefly on my previous note regarding the {{position}} role at {{company}}. I know things can get very busy, so I just wanted to bubble this back to the top of your inbox.
 
+Job link: {{job_link}}
+
 Would love to chat for 10 minutes if you have an opening on your schedule this week.
 
 Thanks again!

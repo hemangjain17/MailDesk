@@ -3,8 +3,10 @@
 import React, { useState } from 'react';
 import { useMailDesk } from '@/context/MailDeskContext';
 import { EmailTemplate } from '@/types';
-import { FileText, Plus, Trash2, Check, Sparkles, Copy } from 'lucide-react';
-import { renderTemplate } from '@/lib/template';
+import { FileText, Plus, Trash2, Sparkles } from 'lucide-react';
+import { renderEmailBodyTemplate } from '@/lib/template';
+import { normalizeTemplateHtml, sanitizeEmailHtml } from '@/lib/email-html';
+import { RichTextEditor } from '@/components/templates/RichTextEditor';
 
 export default function TemplatesPage() {
   const { templates, saveTemplate, deleteTemplate, profile } = useMailDesk();
@@ -29,12 +31,13 @@ export default function TemplatesPage() {
     { label: 'Sender Name', tag: '{{sender_name}}' },
     { label: 'Portfolio URL', tag: '{{portfolio_url}}' },
     { label: 'LinkedIn URL', tag: '{{linkedin_url}}' },
+    { label: 'Job Link', tag: '{{job_link}}' },
   ];
 
   const insertPlaceholder = (tag: string) => {
     setFormState(prev => ({
       ...prev,
-      body: (prev.body || '') + ' ' + tag,
+      body: `${normalizeTemplateHtml(prev.body || '')}${prev.body ? ' ' : ''}${tag}`,
     }));
   };
 
@@ -54,7 +57,7 @@ export default function TemplatesPage() {
     const newTmpl: Partial<EmailTemplate> = {
       name: 'New Custom Template',
       subject: 'Application for {{position}} at {{company}}',
-      body: 'Hi {{recipient_name}},\n\nI am reaching out regarding {{position}} at {{company}}.\n\nBest,\n{{sender_name}}',
+      body: '<p>Hi {{recipient_name}},</p><p>I am reaching out regarding {{position}} at {{company}}.</p><p>Best,<br>{{sender_name}}</p>',
       signature: profile.default_signature,
       is_default: false,
     };
@@ -65,19 +68,21 @@ export default function TemplatesPage() {
     if (!formState.name?.trim()) return;
     saveTemplate({
       ...formState,
+      body: sanitizeEmailHtml(normalizeTemplateHtml(formState.body || '')),
       id: selectedTemplate?.id,
     });
     setIsEditing(false);
   };
 
   // Sample live preview with mock candidate variables
-  const sampleRendered = renderTemplate(formState.body || '', {
+  const sampleRendered = renderEmailBodyTemplate(formState.body || '', {
     recipient_name: 'Satya Nadella',
     company: 'Microsoft',
     position: 'Principal Platform Engineer',
     sender_name: profile.full_name || 'Hemang Developer',
     portfolio_url: profile.portfolio_url || 'https://hemang.dev',
     linkedin_url: profile.linkedin_url || 'https://linkedin.com/in/hemang',
+    job_link: 'https://jobs.example.com/roles/software-engineer',
   });
 
   return (
@@ -195,12 +200,13 @@ export default function TemplatesPage() {
             {/* Body Editor */}
             <div className="space-y-1">
               <label className="text-xs font-medium text-foreground">Email Body</label>
-              <textarea
-                rows={9}
+              <RichTextEditor
                 value={formState.body || ''}
-                onChange={e => setFormState({ ...formState, body: e.target.value })}
-                className="w-full rounded-md border border-input bg-background p-3 text-xs font-mono text-foreground focus:outline-none focus:ring-1 focus:ring-primary leading-relaxed"
+                onChange={body => setFormState(prev => ({ ...prev, body }))}
               />
+              <p className="text-[10px] text-muted-foreground">
+                For a clickable link, select its label (for example “Portfolio”), click the link button, and enter its URL.
+              </p>
             </div>
 
             {/* Live Rendered Preview Box */}
@@ -209,9 +215,10 @@ export default function TemplatesPage() {
                 <Sparkles className="h-3.5 w-3.5 text-primary" />
                 Live Preview (interpolated with sample contact):
               </div>
-              <pre className="whitespace-pre-wrap rounded-md bg-muted/30 p-4 font-sans text-xs text-foreground leading-relaxed border border-border">
-                {sampleRendered.renderedText}
-              </pre>
+              <div
+                className="email-rich-content rounded-md bg-muted/30 p-4 font-sans text-xs text-foreground leading-relaxed border border-border"
+                dangerouslySetInnerHTML={{ __html: sanitizeEmailHtml(normalizeTemplateHtml(sampleRendered.renderedText)) }}
+              />
             </div>
           </div>
         ) : (

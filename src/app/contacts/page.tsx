@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { DateTabs } from '@/components/contacts/DateTabs';
 import { SpreadsheetTable } from '@/components/contacts/SpreadsheetTable';
 import { BulkImportModal } from '@/components/contacts/BulkImportModal';
@@ -8,7 +8,7 @@ import { ScheduleModal } from '@/components/contacts/ScheduleModal';
 import { EmailPreviewModal } from '@/components/contacts/EmailPreviewModal';
 import { useMailDesk } from '@/context/MailDeskContext';
 import { OutreachRecord, OutreachStatus } from '@/types';
-import { Plus, Upload, Search, Filter } from 'lucide-react';
+import { Plus, Upload, Search, Filter, Maximize2, Minimize2, ExternalLink } from 'lucide-react';
 
 export default function ContactsPage() {
   const { outreachRecords, selectedDateId, addSingleRow } = useMailDesk();
@@ -16,6 +16,29 @@ export default function ContactsPage() {
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+
+  // View Mode: 'fit' (fit to screen without horizontal scroll) vs 'expand' (scrollable wide)
+  const [viewMode, setViewMode] = useState<'fit' | 'expand'>('fit');
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('maildesk_table_view_mode') as 'fit' | 'expand' | null;
+      if (saved === 'fit' || saved === 'expand') {
+        setViewMode(saved);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const handleToggleViewMode = (mode: 'fit' | 'expand') => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem('maildesk_table_view_mode', mode);
+    } catch {
+      // ignore
+    }
+  };
 
   // Modal states
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -94,8 +117,64 @@ export default function ContactsPage() {
           </div>
         </div>
 
-        {/* Primary Action Buttons */}
-        <div className="flex items-center gap-2">
+        {/* View Mode Toggle & Primary Action Buttons */}
+        <div className="flex flex-wrap items-center justify-end gap-2.5">
+          <a
+            href="https://hunter.io/search"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground hover:border-primary/50 hover:bg-primary/5 transition-colors shadow-sm"
+            title="Open Hunter to find more employee email addresses"
+          >
+            <ExternalLink className="h-3.5 w-3.5 text-primary" />
+            <span>Find with Hunter</span>
+          </a>
+
+          <a
+            href="https://app.apollo.io/#/companies?qOrganizationName=Timepay%20A&page=1&sortAscending=false&sortByField=recommendations_score&recommendationConfigId=score"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-semibold text-foreground hover:border-primary/50 hover:bg-primary/5 transition-colors shadow-sm"
+            title="Open Apollo company search to find more employees"
+          >
+            <ExternalLink className="h-3.5 w-3.5 text-primary" />
+            <span>Find with Apollo</span>
+          </a>
+
+          <div className="h-4 w-[1px] bg-border hidden sm:block" />
+
+          {/* Fit to Screen vs Expand Toggle */}
+          <div className="flex items-center rounded-md border border-border bg-muted/40 p-0.5">
+            <button
+              type="button"
+              onClick={() => handleToggleViewMode('fit')}
+              className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                viewMode === 'fit'
+                  ? 'bg-background text-foreground shadow-sm font-semibold'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+              title="Fit to Screen: Dynamically fits all columns within window without horizontal scroll"
+            >
+              <Minimize2 className="h-3 w-3 text-primary" />
+              <span>Fit to Screen</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleToggleViewMode('expand')}
+              className={`flex items-center gap-1.5 rounded px-2.5 py-1 text-xs font-medium transition-colors ${
+                viewMode === 'expand'
+                  ? 'bg-background text-foreground shadow-sm font-semibold'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+              title="Expand: Wide scrollable spreadsheet for wide columns"
+            >
+              <Maximize2 className="h-3 w-3 text-muted-foreground" />
+              <span>Expand</span>
+            </button>
+          </div>
+
+          <div className="h-4 w-[1px] bg-border hidden sm:block" />
+
           <button
             onClick={() => addSingleRow(selectedDateId === 'all' ? undefined : selectedDateId)}
             className="flex items-center gap-1 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-semibold text-foreground hover:bg-muted transition-colors shadow-sm"
@@ -117,6 +196,8 @@ export default function ContactsPage() {
       {/* 3. Main Spreadsheet Table */}
       <SpreadsheetTable
         records={filteredRecords}
+        viewMode={viewMode}
+        onToggleViewMode={handleToggleViewMode}
         onOpenSchedule={recordIds => setScheduleModalState({ isOpen: true, recordIds })}
         onOpenPreview={rec => setPreviewRecord(rec)}
       />

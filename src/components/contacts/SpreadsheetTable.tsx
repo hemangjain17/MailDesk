@@ -19,6 +19,7 @@ import {
   AlertCircle,
   FileEdit,
   FolderInput,
+  ExternalLink,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -27,12 +28,16 @@ interface SpreadsheetTableProps {
   records: OutreachRecord[];
   onOpenSchedule: (recordIds: string[]) => void;
   onOpenPreview: (record: OutreachRecord) => void;
+  viewMode?: 'fit' | 'expand';
+  onToggleViewMode?: (mode: 'fit' | 'expand') => void;
 }
 
 export function SpreadsheetTable({
   records,
   onOpenSchedule,
   onOpenPreview,
+  viewMode = 'fit',
+  onToggleViewMode,
 }: SpreadsheetTableProps) {
   const {
     updateOutreachRecord,
@@ -147,6 +152,14 @@ export function SpreadsheetTable({
       } else if (field === 'position') {
         updateOutreachRecord(rowId, { position_override: value });
         updateContact(rec.contact_id, { position: value });
+      } else if (field === 'job_link') {
+        const trimmedLink = value.trim();
+        updateOutreachRecord(rowId, {
+          job_link:
+            trimmedLink && !/^https?:\/\//i.test(trimmedLink)
+              ? `https://${trimmedLink}`
+              : trimmedLink,
+        });
       } else if (field === 'subject') {
         updateOutreachRecord(rowId, { subject_override: value });
       } else if (field === 'notes') {
@@ -191,12 +204,24 @@ export function SpreadsheetTable({
   return (
     <div className="relative flex-1 flex flex-col min-h-0 overflow-hidden select-text">
       {/* Table Container */}
-      <div className="flex-1 overflow-auto border-t border-border">
-        <table className="w-full border-collapse text-left text-xs">
+      <div
+        className={`flex-1 border-t border-border ${
+          viewMode === 'fit' ? 'overflow-x-hidden overflow-y-auto' : 'overflow-auto'
+        }`}
+      >
+        <table
+          className={`border-collapse text-left text-xs ${
+            viewMode === 'fit' ? 'table-fixed w-full' : 'w-full min-w-[1450px]'
+          }`}
+        >
           {/* Sticky Header */}
           <thead className="sticky top-0 z-20 bg-muted/90 backdrop-blur-sm border-b border-border text-muted-foreground font-semibold">
             <tr>
-              <th className="w-10 min-w-[40px] px-3 py-2 sticky left-0 z-30 bg-card border-r border-border shadow-[2px_0_4px_rgba(0,0,0,0.04)]">
+              <th
+                className={`sticky left-0 z-30 bg-card border-r border-border shadow-[2px_0_4px_rgba(0,0,0,0.04)] text-center ${
+                  viewMode === 'fit' ? 'w-9 min-w-[36px] max-w-[36px] px-2 py-2' : 'w-10 min-w-[40px] px-3 py-2'
+                }`}
+              >
                 <input
                   type="checkbox"
                   checked={records.length > 0 && selectedIds.length === records.length}
@@ -204,18 +229,97 @@ export function SpreadsheetTable({
                   className="rounded border-input text-primary focus:ring-primary cursor-pointer"
                 />
               </th>
-              <th className="min-w-[120px] px-3 py-2 border-r border-border">Recipient Name</th>
-              <th className="min-w-[150px] px-3 py-2 border-r border-border">Email Address</th>
-              <th className="min-w-[100px] px-3 py-2 border-r border-border">Company</th>
-              <th className="min-w-[110px] px-3 py-2 border-r border-border">Position</th>
-              <th className="min-w-[130px] px-3 py-2 border-r border-border">Template</th>
-              <th className="min-w-[160px] px-3 py-2 border-r border-border">Subject</th>
-              <th className="min-w-[90px] px-3 py-2 border-r border-border">Status</th>
-              <th className="min-w-[115px] px-3 py-2 border-r border-border">Scheduled For</th>
-              <th className="min-w-[115px] px-3 py-2 border-r border-border">Sent At</th>
-              <th className="min-w-[95px] px-3 py-2 border-r border-border">Last Reply</th>
-              <th className="min-w-[100px] px-3 py-2 border-r border-border">Notes</th>
-              <th className="w-10 min-w-[40px] px-2 py-2 text-center">Actions</th>
+              <th
+                className={`border-r border-border ${
+                  viewMode === 'fit' ? 'w-[11%] px-2.5 py-2 truncate' : 'min-w-[120px] px-3 py-2'
+                }`}
+              >
+                Recipient Name
+              </th>
+              <th
+                className={`border-r border-border ${
+                  viewMode === 'fit' ? 'w-[14%] px-2.5 py-2 truncate' : 'min-w-[150px] px-3 py-2'
+                }`}
+              >
+                Email Address
+              </th>
+              <th
+                className={`border-r border-border ${
+                  viewMode === 'fit' ? 'w-[9%] px-2.5 py-2 truncate' : 'min-w-[100px] px-3 py-2'
+                }`}
+              >
+                Company
+              </th>
+              <th
+                className={`border-r border-border ${
+                  viewMode === 'fit' ? 'w-[9%] px-2.5 py-2 truncate' : 'min-w-[110px] px-3 py-2'
+                }`}
+              >
+                Position
+              </th>
+              <th
+                className={`border-r border-border ${
+                  viewMode === 'fit' ? 'w-[8%] px-2 py-2 truncate' : 'min-w-[130px] px-3 py-2'
+                }`}
+              >
+                Job Link
+              </th>
+              <th
+                className={`border-r border-border ${
+                  viewMode === 'fit' ? 'w-[11%] px-2 py-2 truncate' : 'min-w-[130px] px-3 py-2'
+                }`}
+              >
+                Template
+              </th>
+              <th
+                className={`border-r border-border ${
+                  viewMode === 'fit' ? 'w-[14%] px-2.5 py-2 truncate' : 'min-w-[160px] px-3 py-2'
+                }`}
+              >
+                Subject
+              </th>
+              <th
+                className={`border-r border-border text-center ${
+                  viewMode === 'fit' ? 'w-[8%] px-2 py-2 truncate' : 'min-w-[90px] px-3 py-2'
+                }`}
+              >
+                Status
+              </th>
+              <th
+                className={`border-r border-border ${
+                  viewMode === 'fit' ? 'w-[8%] px-2 py-2 truncate' : 'min-w-[115px] px-3 py-2'
+                }`}
+              >
+                Scheduled For
+              </th>
+              <th
+                className={`border-r border-border ${
+                  viewMode === 'fit' ? 'w-[8%] px-2 py-2 truncate' : 'min-w-[115px] px-3 py-2'
+                }`}
+              >
+                Sent At
+              </th>
+              <th
+                className={`border-r border-border ${
+                  viewMode === 'fit' ? 'w-[7%] px-2 py-2 truncate' : 'min-w-[95px] px-3 py-2'
+                }`}
+              >
+                Last Reply
+              </th>
+              <th
+                className={`border-r border-border ${
+                  viewMode === 'fit' ? 'w-[7%] px-2 py-2 truncate' : 'min-w-[100px] px-3 py-2'
+                }`}
+              >
+                Notes
+              </th>
+              <th
+                className={`text-center ${
+                  viewMode === 'fit' ? 'w-9 min-w-[36px] max-w-[36px] px-1 py-2' : 'w-10 min-w-[40px] px-2 py-2'
+                }`}
+              >
+                Actions
+              </th>
             </tr>
           </thead>
 
@@ -223,7 +327,7 @@ export function SpreadsheetTable({
           <tbody className="divide-y divide-border bg-card">
             {records.length === 0 ? (
               <tr>
-                <td colSpan={13} className="py-12 text-center text-sm text-muted-foreground">
+                <td colSpan={14} className="py-12 text-center text-sm text-muted-foreground">
                   No outreach records in this view. Click <strong>Add Emails</strong> or <strong>+ New Row</strong> to start.
                 </td>
               </tr>
@@ -244,7 +348,9 @@ export function SpreadsheetTable({
                     {/* Select Checkbox */}
                     <td
                       onClick={e => e.stopPropagation()}
-                      className={`w-10 min-w-[40px] px-3 py-1.5 sticky left-0 z-10 border-r border-border shadow-[2px_0_4px_rgba(0,0,0,0.04)] ${
+                      className={`sticky left-0 z-10 border-r border-border shadow-[2px_0_4px_rgba(0,0,0,0.04)] text-center ${
+                        viewMode === 'fit' ? 'w-9 min-w-[36px] max-w-[36px] px-2 py-1.5' : 'w-10 min-w-[40px] px-3 py-1.5'
+                      } ${
                         isSelected ? 'bg-blue-50/90 dark:bg-blue-950/90' : 'bg-card group-hover:bg-muted/40'
                       }`}
                     >
@@ -258,10 +364,13 @@ export function SpreadsheetTable({
 
                     {/* Name */}
                     <td
+                      title={rec.contact.name || 'Double click to add name'}
                       onDoubleClick={() =>
                         setEditingCell({ rowId: rec.id, field: 'name', value: rec.contact.name || '' })
                       }
-                      className="px-3 py-1.5 border-r border-border text-foreground font-medium truncate max-w-[160px]"
+                      className={`border-r border-border text-foreground font-medium truncate ${
+                        viewMode === 'fit' ? 'px-2.5 py-1.5' : 'px-3 py-1.5 max-w-[160px]'
+                      }`}
                     >
                       {editingCell?.rowId === rec.id && editingCell.field === 'name' ? (
                         <input
@@ -279,10 +388,13 @@ export function SpreadsheetTable({
 
                     {/* Email */}
                     <td
+                      title={rec.contact.email}
                       onDoubleClick={() =>
                         setEditingCell({ rowId: rec.id, field: 'email', value: rec.contact.email })
                       }
-                      className="px-3 py-1.5 border-r border-border font-mono text-[11px] text-foreground truncate max-w-[200px]"
+                      className={`border-r border-border font-mono text-[11px] text-foreground truncate ${
+                        viewMode === 'fit' ? 'px-2.5 py-1.5' : 'px-3 py-1.5 max-w-[200px]'
+                      }`}
                     >
                       {editingCell?.rowId === rec.id && editingCell.field === 'email' ? (
                         <input
@@ -300,6 +412,7 @@ export function SpreadsheetTable({
 
                     {/* Company */}
                     <td
+                      title={rec.company_override || rec.contact.company || 'Double click to set company'}
                       onDoubleClick={() =>
                         setEditingCell({
                           rowId: rec.id,
@@ -307,7 +420,9 @@ export function SpreadsheetTable({
                           value: rec.company_override || rec.contact.company || '',
                         })
                       }
-                      className="px-3 py-1.5 border-r border-border text-foreground truncate max-w-[140px]"
+                      className={`border-r border-border text-foreground truncate ${
+                        viewMode === 'fit' ? 'px-2.5 py-1.5' : 'px-3 py-1.5 max-w-[140px]'
+                      }`}
                     >
                       {editingCell?.rowId === rec.id && editingCell.field === 'company' ? (
                         <input
@@ -327,6 +442,7 @@ export function SpreadsheetTable({
 
                     {/* Position */}
                     <td
+                      title={rec.position_override || rec.contact.position || 'Double click to set position'}
                       onDoubleClick={() =>
                         setEditingCell({
                           rowId: rec.id,
@@ -334,7 +450,9 @@ export function SpreadsheetTable({
                           value: rec.position_override || rec.contact.position || '',
                         })
                       }
-                      className="px-3 py-1.5 border-r border-border text-foreground truncate max-w-[160px]"
+                      className={`border-r border-border text-foreground truncate ${
+                        viewMode === 'fit' ? 'px-2.5 py-1.5' : 'px-3 py-1.5 max-w-[160px]'
+                      }`}
                     >
                       {editingCell?.rowId === rec.id && editingCell.field === 'position' ? (
                         <input
@@ -352,8 +470,45 @@ export function SpreadsheetTable({
                       )}
                     </td>
 
+                    {/* Job Link */}
+                    <td
+                      title={rec.job_link || 'Double click to add job link'}
+                      onDoubleClick={() =>
+                        setEditingCell({ rowId: rec.id, field: 'job_link', value: rec.job_link || '' })
+                      }
+                      className={`border-r border-border truncate ${
+                        viewMode === 'fit' ? 'px-2 py-1.5' : 'px-3 py-1.5 max-w-[180px]'
+                      }`}
+                    >
+                      {editingCell?.rowId === rec.id && editingCell.field === 'job_link' ? (
+                        <input
+                          autoFocus
+                          type="url"
+                          value={editingCell.value}
+                          onChange={e => setEditingCell({ ...editingCell, value: e.target.value })}
+                          onBlur={handleCellBlur}
+                          onKeyDown={handleCellKeyDown}
+                          placeholder="https://..."
+                          className="w-full rounded border border-primary bg-background px-1.5 py-0.5 text-xs text-foreground focus:outline-none"
+                        />
+                      ) : rec.job_link ? (
+                        <a
+                          href={rec.job_link}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onDoubleClick={event => event.preventDefault()}
+                          className="inline-flex max-w-full items-center gap-1 truncate text-primary hover:underline"
+                        >
+                          <ExternalLink className="h-3 w-3 shrink-0" />
+                          <span className="truncate">Open job</span>
+                        </a>
+                      ) : (
+                        <span className="text-muted-foreground/50 italic">Add link</span>
+                      )}
+                    </td>
+
                     {/* Template Dropdown */}
-                    <td className="px-2 py-1 border-r border-border">
+                    <td className={`border-r border-border ${viewMode === 'fit' ? 'px-1.5 py-1' : 'px-2 py-1'}`}>
                       <select
                         value={rec.template_id || ''}
                         onChange={e => {
@@ -363,7 +518,7 @@ export function SpreadsheetTable({
                             template: chosenTmpl,
                           });
                         }}
-                        className="w-full truncate rounded border border-transparent hover:border-input bg-transparent px-1.5 py-0.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer"
+                        className="w-full truncate rounded border border-transparent hover:border-input bg-transparent px-1 py-0.5 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary cursor-pointer"
                       >
                         {templates.map(t => (
                           <option key={t.id} value={t.id}>
@@ -375,6 +530,7 @@ export function SpreadsheetTable({
 
                     {/* Subject */}
                     <td
+                      title={rec.subject_override || rec.template?.subject || 'Double click to edit subject'}
                       onDoubleClick={() =>
                         setEditingCell({
                           rowId: rec.id,
@@ -382,7 +538,9 @@ export function SpreadsheetTable({
                           value: rec.subject_override || rec.template?.subject || '',
                         })
                       }
-                      className="px-3 py-1.5 border-r border-border text-foreground truncate max-w-[220px]"
+                      className={`border-r border-border text-foreground truncate ${
+                        viewMode === 'fit' ? 'px-2.5 py-1.5' : 'px-3 py-1.5 max-w-[220px]'
+                      }`}
                     >
                       {editingCell?.rowId === rec.id && editingCell.field === 'subject' ? (
                         <input
@@ -399,7 +557,7 @@ export function SpreadsheetTable({
                     </td>
 
                     {/* Status Badge */}
-                    <td className="px-3 py-1.5 border-r border-border">
+                    <td className={`border-r border-border text-center ${viewMode === 'fit' ? 'px-1.5 py-1.5' : 'px-3 py-1.5'}`}>
                       <span
                         className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold tracking-wide ${getStatusBadge(
                           rec.current_status
@@ -410,17 +568,32 @@ export function SpreadsheetTable({
                     </td>
 
                     {/* Scheduled For */}
-                    <td className="px-3 py-1.5 border-r border-border text-muted-foreground text-[11px] truncate">
+                    <td
+                      title={rec.scheduled_send_at ? formatDateTime(rec.scheduled_send_at) : 'Not scheduled'}
+                      className={`border-r border-border text-muted-foreground text-[11px] truncate ${
+                        viewMode === 'fit' ? 'px-2 py-1.5' : 'px-3 py-1.5'
+                      }`}
+                    >
                       {formatDateTime(rec.scheduled_send_at)}
                     </td>
 
                     {/* Sent At */}
-                    <td className="px-3 py-1.5 border-r border-border text-muted-foreground text-[11px] truncate">
+                    <td
+                      title={rec.sent_at ? formatDateTime(rec.sent_at) : 'Not sent yet'}
+                      className={`border-r border-border text-muted-foreground text-[11px] truncate ${
+                        viewMode === 'fit' ? 'px-2 py-1.5' : 'px-3 py-1.5'
+                      }`}
+                    >
                       {formatDateTime(rec.sent_at)}
                     </td>
 
                     {/* Last Reply */}
-                    <td className="px-3 py-1.5 border-r border-border text-[11px] truncate">
+                    <td
+                      title={rec.last_reply_at ? formatDateTime(rec.last_reply_at) : 'No reply recorded'}
+                      className={`border-r border-border text-[11px] truncate ${
+                        viewMode === 'fit' ? 'px-2 py-1.5' : 'px-3 py-1.5'
+                      }`}
+                    >
                       {rec.last_reply_at ? (
                         <span className="font-semibold text-emerald-600 dark:text-emerald-400">
                           {formatDateTime(rec.last_reply_at)}
@@ -432,10 +605,13 @@ export function SpreadsheetTable({
 
                     {/* Notes */}
                     <td
+                      title={rec.contact.notes || 'Double click to add notes'}
                       onDoubleClick={() =>
                         setEditingCell({ rowId: rec.id, field: 'notes', value: rec.contact.notes || '' })
                       }
-                      className="px-3 py-1.5 border-r border-border text-muted-foreground truncate max-w-[180px]"
+                      className={`border-r border-border text-muted-foreground truncate ${
+                        viewMode === 'fit' ? 'px-2 py-1.5' : 'px-3 py-1.5 max-w-[180px]'
+                      }`}
                     >
                       {editingCell?.rowId === rec.id && editingCell.field === 'notes' ? (
                         <input
@@ -452,7 +628,7 @@ export function SpreadsheetTable({
                     </td>
 
                     {/* Actions button */}
-                    <td className="px-2 py-1.5 text-center">
+                    <td className={`text-center ${viewMode === 'fit' ? 'w-9 px-1 py-1.5' : 'px-2 py-1.5'}`}>
                       <button
                         onClick={e => handleContextMenu(e, rec)}
                         className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"

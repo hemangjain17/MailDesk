@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase/admin';
+import { normalizeTemplateHtml, sanitizeEmailHtml } from '@/lib/email-html';
 
 export async function POST(req: NextRequest) {
   try {
@@ -59,6 +60,7 @@ export async function POST(req: NextRequest) {
             contact_id: contact.id,
             current_status: 'Scheduled',
             scheduled_send_at: job.scheduledAt,
+            job_link: job.jobLink || null,
           })
           .select()
           .single();
@@ -83,7 +85,7 @@ export async function POST(req: NextRequest) {
           outreach_record_id: outreachId,
           email_account_id: account.id,
           approved_subject: job.subject,
-          approved_body: job.body,
+          approved_body: sanitizeEmailHtml(normalizeTemplateHtml(job.body || '')),
           scheduled_at: job.scheduledAt,
           status: 'pending',
           idempotency_key: idempKey,
