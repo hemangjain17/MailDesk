@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState, useCallback } from 'react';
 import {
   Contact,
   DateGroup,
@@ -8,7 +8,6 @@ import {
   EmailMessage,
   EmailTemplate,
   FollowupReminder,
-  JobStatus,
   NotificationItem,
   OutreachRecord,
   OutreachStatus,
@@ -28,7 +27,7 @@ import {
   initialTemplates,
 } from '@/lib/mock-data';
 import { parseBulkContacts, ParseResult } from '@/lib/parser';
-import { renderEmailBodyTemplate, renderTemplate } from '@/lib/template';
+import { normalizeJobLink, renderEmailBodyTemplate, renderTemplate } from '@/lib/template';
 import { htmlToPlainText, normalizeTemplateHtml, sanitizeEmailHtml } from '@/lib/email-html';
 import { addDays, format } from 'date-fns';
 import { toast } from 'sonner';
@@ -61,12 +60,18 @@ interface MailDeskContextType {
     mode: 'same_time' | 'sequential';
     intervalMinutes: number;
     followupDays?: number | null;
+    jobLinks?: Record<string, string>;
     attachments?: Array<{ filename: string; size_bytes?: number }>;
   }) => Promise<void>;
   sendNowRecords: (
     recordIds: string[],
-    options?: { followupDays?: number | null; templateId?: string; isFollowup?: boolean }
-  ) => Promise<void>;
+    options?: {
+      followupDays?: number | null;
+      templateId?: string;
+      isFollowup?: boolean;
+      jobLinks?: Record<string, string>;
+    }
+  ) => Promise<{ sent: number; failed: number }>;
   processDueEmails: (forceAll?: boolean) => Promise<{ sent: number; failed: number }>;
   cancelScheduledJob: (jobId: string) => void;
   saveTemplate: (template: Partial<EmailTemplate>) => void;
@@ -99,6 +104,11 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
   const [followups, setFollowups] = useState<FollowupReminder[]>(initialFollowups);
   const [notifications, setNotifications] = useState<NotificationItem[]>(initialNotifications);
   const [isLoaded, setIsLoaded] = useState(false);
+  const dateGroupsRef = useRef<DateGroup[]>(initialDateGroups);
+
+  useEffect(() => {
+    dateGroupsRef.current = dateGroups;
+  }, [dateGroups]);
 
   // Load from localStorage on client mount & reconcile statuses
   useEffect(() => {
@@ -126,17 +136,15 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
         });
         setOutreachRecords(reconciledRecords);
 
-        // Status Reconciliation: if a scheduled email's record is already Sent, mark job as 'sent'
-        const sentRecordIds = new Set(
-          reconciledRecords.filter(r => r.current_status === 'Sent' || r.sent_at).map(r => r.id)
-        );
         const rawJobs: ScheduledEmail[] = parsed.scheduledEmails || [];
-        const reconciledJobs = rawJobs.map(j => {
-          if (sentRecordIds.has(j.outreach_record_id) && j.status === 'pending') {
-            return { ...j, status: 'sent' as JobStatus };
-          }
-          return j;
-        });
+        // A queued delivery is independent from an immediate send on the same outreach row.
+        // Only the queue worker or an explicit cancellation may change its status.
+        // Recover future jobs that older builds incorrectly marked sent after a Send Now action.
+        const reconciledJobs = rawJobs.map(job =>
+          job.status === 'sent' && new Date(job.scheduled_at).getTime() > Date.now()
+            ? { ...job, status: 'pending' as const, sent_message_id: null, last_error: null }
+            : job
+        );
         setScheduledEmails(reconciledJobs);
       }
     } catch (e) {
@@ -145,6 +153,48 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
       setIsLoaded(true);
     }
   }, []);
+
+  // Keep All Contacts focused on today's tab. At midnight, create/select the new
+  // day without removing any previous date groups or their outreach records.
+  useEffect(() => {
+    if (!isLoaded) return;
+
+    let rolloverTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const selectTodayAndScheduleNextRollover = () => {
+      const now = new Date();
+      const today = format(now, 'yyyy-MM-dd');
+      const existingToday = dateGroupsRef.current.find(group => group.group_date === today);
+
+      if (existingToday) {
+        setSelectedDateId(existingToday.id);
+      } else {
+        const todayGroup: DateGroup = {
+          id: `dg_${Date.now()}`,
+          user_id: profile.id,
+          group_date: today,
+          label: format(now, 'd MMM yyyy'),
+          created_at: now.toISOString(),
+          count: 0,
+        };
+        dateGroupsRef.current = [todayGroup, ...dateGroupsRef.current];
+        setDateGroups(previous => [todayGroup, ...previous]);
+        setSelectedDateId(todayGroup.id);
+      }
+
+      const nextMidnight = new Date(now);
+      nextMidnight.setHours(24, 0, 1, 0);
+      rolloverTimer = setTimeout(
+        selectTodayAndScheduleNextRollover,
+        nextMidnight.getTime() - now.getTime()
+      );
+    };
+
+    selectTodayAndScheduleNextRollover();
+    return () => {
+      if (rolloverTimer) clearTimeout(rolloverTimer);
+    };
+  }, [isLoaded, profile.id]);
 
   // Save changes to localStorage
   useEffect(() => {
@@ -479,6 +529,7 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
     mode,
     intervalMinutes,
     followupDays,
+    jobLinks = {},
     attachments = [],
   }: {
     recordIds: string[];
@@ -487,6 +538,7 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
     mode: 'same_time' | 'sequential';
     intervalMinutes: number;
     followupDays?: number | null;
+    jobLinks?: Record<string, string>;
     attachments?: Array<{ filename: string; size_bytes?: number }>;
   }) => {
     const chosenTemplate = templates.find(t => t.id === templateId) || templates[0];
@@ -498,6 +550,7 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
     recordIds.forEach((recId, index) => {
       const rec = outreachRecords.find(r => r.id === recId);
       if (!rec) return;
+      const effectiveJobLink = normalizeJobLink(jobLinks[rec.id] ?? rec.job_link ?? '');
 
       const sendTime =
         mode === 'sequential'
@@ -511,7 +564,7 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
         sender_name: profile.full_name || '',
         portfolio_url: profile.portfolio_url || '',
         linkedin_url: profile.linkedin_url || '',
-        job_link: rec.job_link || '',
+        job_link: effectiveJobLink,
       });
 
       const renderedBody = renderEmailBodyTemplate(rec.body_override || chosenTemplate.body, {
@@ -521,7 +574,7 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
         sender_name: profile.full_name || '',
         portfolio_url: profile.portfolio_url || '',
         linkedin_url: profile.linkedin_url || '',
-        job_link: rec.job_link || '',
+        job_link: effectiveJobLink,
       });
 
       const jobId = `job_${Date.now()}_${index}`;
@@ -541,7 +594,7 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
         locked_until: null,
         sent_message_id: null,
         created_at: new Date().toISOString(),
-        outreach_record: rec,
+        outreach_record: { ...rec, job_link: effectiveJobLink },
       };
 
       newJobs.push(newJob);
@@ -599,6 +652,7 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
             current_status: 'Scheduled',
             template_id: templateId,
             template: chosenTemplate,
+            job_link: matchJob?.outreach_record?.job_link || r.job_link || null,
             followup_days: followupDays !== undefined ? (followupDays || 5) : r.followup_days,
             scheduled_send_at: matchJob?.scheduled_at || scheduledAt,
             updated_at: new Date().toISOString(),
@@ -617,7 +671,12 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
 
   const sendNowRecords = async (
     recordIds: string[],
-    options?: { followupDays?: number | null; templateId?: string; isFollowup?: boolean }
+    options?: {
+      followupDays?: number | null;
+      templateId?: string;
+      isFollowup?: boolean;
+      jobLinks?: Record<string, string>;
+    }
   ) => {
     const defaultTemplate = templates.find(template => template.id === options?.templateId) || templates[0];
     const newMessages: EmailMessage[] = [];
@@ -628,9 +687,20 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
     let failedCount = 0;
     const successfulFollowupRecordIds = new Set<string>();
 
+    if (options?.jobLinks) {
+      setOutreachRecords(previous =>
+        previous.map(record =>
+          Object.prototype.hasOwnProperty.call(options.jobLinks, record.id)
+            ? { ...record, job_link: normalizeJobLink(options.jobLinks?.[record.id] || '') || null }
+            : record
+        )
+      );
+    }
+
     for (const recId of recordIds) {
       const r = outreachRecords.find(item => item.id === recId);
       if (!r) continue;
+      const effectiveJobLink = normalizeJobLink(options?.jobLinks?.[r.id] ?? r.job_link ?? '');
 
       const subjectSource = options?.isFollowup
         ? defaultTemplate.subject
@@ -644,7 +714,7 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
         company: r.company_override || r.contact.company || '',
         position: r.position_override || r.contact.position || '',
         sender_name: profile.full_name || '',
-        job_link: r.job_link || '',
+        job_link: effectiveJobLink,
       }).renderedText;
 
       const body = renderEmailBodyTemplate(bodySource, {
@@ -654,7 +724,7 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
         sender_name: profile.full_name || '',
         portfolio_url: profile.portfolio_url || '',
         linkedin_url: profile.linkedin_url || '',
-        job_link: r.job_link || '',
+        job_link: effectiveJobLink,
       }).renderedText;
       const bodyHtml = sanitizeEmailHtml(normalizeTemplateHtml(body));
       const bodyText = htmlToPlainText(bodyHtml);
@@ -753,6 +823,7 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
                   ...row,
                   current_status: 'Sent',
                   sent_at: sentIso,
+                  job_link: effectiveJobLink || row.job_link || null,
                   followup_days: options?.isFollowup
                     ? row.followup_days
                     : options?.followupDays !== undefined
@@ -764,19 +835,12 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
           )
         );
 
-        // Update any matching scheduled email job to 'sent'
-        setScheduledEmails(prev =>
-          prev.map(j =>
-            j.outreach_record_id === r.id
-              ? { ...j, status: 'sent', sent_message_id: msgId, last_error: null }
-              : j
-          )
-        );
-
         // Setup follow-up reminder if requested
         const effectiveFollowupDays = options?.isFollowup
           ? null
-          : options?.followupDays ?? r.followup_days;
+          : options?.followupDays !== undefined
+            ? options.followupDays
+            : r.followup_days;
         if (effectiveFollowupDays) {
           newFollowups.push({
             id: `fol_${Date.now()}_${r.id}`,
@@ -794,13 +858,6 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
         failedCount++;
         setOutreachRecords(prev =>
           prev.map(row => (row.id === r.id ? { ...row, current_status: 'Failed', updated_at: new Date().toISOString() } : row))
-        );
-        setScheduledEmails(prev =>
-          prev.map(j =>
-            j.outreach_record_id === r.id
-              ? { ...j, status: 'failed', last_error: err.message }
-              : j
-          )
         );
         newNotifications.push({
           id: `notif_err_${Date.now()}_${r.id}`,
@@ -838,6 +895,7 @@ export function MailDeskProvider({ children }: { children: React.ReactNode }) {
         )
       );
     }
+    return { sent: sentCount, failed: failedCount };
   };
 
   const processDueEmails = async (forceAll: boolean = false): Promise<{ sent: number; failed: number }> => {

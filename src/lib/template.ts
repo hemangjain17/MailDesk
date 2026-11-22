@@ -53,14 +53,18 @@ export function renderTemplate(
  * Renders an email body and turns standalone {{job_link}} placeholders into
  * clickable anchors. Existing authored links are left unchanged.
  */
+export function normalizeJobLink(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
 export function renderEmailBodyTemplate(
   templateText: string,
   variables: TemplateVariables
 ): RenderResult {
   if (!templateText || !variables.job_link) return renderTemplate(templateText, variables);
-  const normalizedJobLink = /^https?:\/\//i.test(variables.job_link)
-    ? variables.job_link
-    : `https://${variables.job_link}`;
+  const normalizedJobLink = normalizeJobLink(variables.job_link);
 
   const anchorRegex = /<a\b[^>]*>[\s\S]*?<\/a>/gi;
   let cursor = 0;

@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
-import { Calendar, Clock, Sparkles, Check, AlertCircle, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useEffect, useState, useMemo } from 'react';
+import { Clock, Sparkles, AlertCircle, X, ChevronLeft, ChevronRight, Link as LinkIcon, Send, CheckCircle } from 'lucide-react';
 import { useMailDesk } from '@/context/MailDeskContext';
 import { renderEmailBodyTemplate, renderTemplate } from '@/lib/template';
 import { format, addDays } from 'date-fns';
@@ -20,6 +20,7 @@ export function ScheduleModal({ isOpen, onClose, selectedRecordIds }: ScheduleMo
     emailAccount,
     profile,
     scheduleOutreachRecords,
+    sendNowRecords,
   } = useMailDesk();
 
   const [chosenTemplateId, setChosenTemplateId] = useState<string>(
@@ -35,6 +36,9 @@ export function ScheduleModal({ isOpen, onClose, selectedRecordIds }: ScheduleMo
   const [previewIndex, setPreviewIndex] = useState(0);
   const [enableFollowup, setEnableFollowup] = useState(true);
   const [followupDays, setFollowupDays] = useState(profile.default_followup_days || 5);
+  const [jobLinks, setJobLinks] = useState<Record<string, string>>({});
+  const [sendingRecordId, setSendingRecordId] = useState<string | null>(null);
+  const [sentNowRecordIds, setSentNowRecordIds] = useState<string[]>([]);
 
   const selectedRecords = useMemo(() => {
     return outreachRecords.filter(r => selectedRecordIds.includes(r.id));
@@ -43,6 +47,17 @@ export function ScheduleModal({ isOpen, onClose, selectedRecordIds }: ScheduleMo
   const chosenTemplate = useMemo(() => {
     return templates.find(t => t.id === chosenTemplateId) || templates[0];
   }, [templates, chosenTemplateId]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setJobLinks(
+      Object.fromEntries(
+        selectedRecords.map(record => [record.id, record.job_link || ''])
+      )
+    );
+    setPreviewIndex(0);
+    setSentNowRecordIds([]);
+  }, [isOpen, selectedRecordIds.join('|')]);
 
   // Generate previews for all selected records
   const renderedPreviews = useMemo(() => {
@@ -55,7 +70,7 @@ export function ScheduleModal({ isOpen, onClose, selectedRecordIds }: ScheduleMo
         sender_name: profile.full_name || '',
         portfolio_url: profile.portfolio_url || '',
         linkedin_url: profile.linkedin_url || '',
-        job_link: rec.job_link || '',
+        job_link: jobLinks[rec.id] ?? rec.job_link ?? '',
       });
 
       const body = renderEmailBodyTemplate(rec.body_override || chosenTemplate.body, {
@@ -65,7 +80,7 @@ export function ScheduleModal({ isOpen, onClose, selectedRecordIds }: ScheduleMo
         sender_name: profile.full_name || '',
         portfolio_url: profile.portfolio_url || '',
         linkedin_url: profile.linkedin_url || '',
-        job_link: rec.job_link || '',
+        job_link: jobLinks[rec.id] ?? rec.job_link ?? '',
       });
 
       const hasMissing = subj.hasUnresolvedPlaceholders || body.hasUnresolvedPlaceholders;
@@ -79,22 +94,36 @@ export function ScheduleModal({ isOpen, onClose, selectedRecordIds }: ScheduleMo
         missingList,
       };
     });
-  }, [selectedRecords, chosenTemplate, profile]);
+  }, [selectedRecords, chosenTemplate, profile, jobLinks]);
 
   const totalMissingPlaceholders = renderedPreviews.filter(p => p.hasMissing).length;
+  const templateUsesJobLink = Boolean(
+    chosenTemplate && /\{\{job_link\}\}/.test(`${chosenTemplate.subject} ${chosenTemplate.body}`)
+  );
+  const remainingRecordIds = selectedRecordIds.filter(id => !sentNowRecordIds.includes(id));
+  const missingJobLinkCount = templateUsesJobLink
+    ? selectedRecords.filter(
+        record => remainingRecordIds.includes(record.id) && !(jobLinks[record.id] || '').trim()
+      ).length
+    : 0;
 
   if (!isOpen) return null;
 
   const handleConfirmSchedule = async () => {
+    if (remainingRecordIds.length === 0) {
+      onClose();
+      return;
+    }
     const combinedTimestamp = new Date(`${scheduledDate}T${scheduledTime}:00`).toISOString();
 
     await scheduleOutreachRecords({
-      recordIds: selectedRecordIds,
+      recordIds: remainingRecordIds,
       templateId: chosenTemplateId,
       scheduledAt: combinedTimestamp,
       mode: schedulingMode,
       intervalMinutes,
       followupDays: enableFollowup ? followupDays : null,
+      jobLinks,
       attachments: [{ filename: 'Resume_Engineering.pdf', size_bytes: 145000 }],
     });
 
@@ -102,6 +131,29 @@ export function ScheduleModal({ isOpen, onClose, selectedRecordIds }: ScheduleMo
   };
 
   const currentPreview = renderedPreviews[previewIndex];
+  const currentWasSentNow = currentPreview
+    ? sentNowRecordIds.includes(currentPreview.record.id)
+    : false;
+
+  const handleSendCurrentNow = async () => {
+    if (!currentPreview || currentWasSentNow) return;
+    const recordId = currentPreview.record.id;
+    if (templateUsesJobLink && !(jobLinks[recordId] || '').trim()) return;
+
+    setSendingRecordId(recordId);
+    try {
+      const result = await sendNowRecords([recordId], {
+        templateId: chosenTemplateId,
+        followupDays: enableFollowup ? followupDays : null,
+        jobLinks,
+      });
+      if (result.sent > 0) {
+        setSentNowRecordIds(previous => [...previous, recordId]);
+      }
+    } finally {
+      setSendingRecordId(null);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in">
@@ -114,6 +166,7 @@ export function ScheduleModal({ isOpen, onClose, selectedRecordIds }: ScheduleMo
               Schedule Email ({selectedRecordIds.length} Recipient{selectedRecordIds.length > 1 ? 's' : ''})
             </h2>
           </div>
+
           <button onClick={onClose} className="rounded p-1 text-muted-foreground hover:bg-muted">
             <X className="h-5 w-5" />
           </button>
@@ -239,7 +292,9 @@ export function ScheduleModal({ isOpen, onClose, selectedRecordIds }: ScheduleMo
                     Preview {previewIndex + 1} of {renderedPreviews.length}:
                   </span>{' '}
                   <span className="text-muted-foreground font-mono">
-                    {currentPreview.record.contact.name || currentPreview.record.contact.email}
+                    {currentPreview.record.contact.name
+                      ? `${currentPreview.record.contact.name} <${currentPreview.record.contact.email}>`
+                      : currentPreview.record.contact.email}
                   </span>
                 </div>
                 <div className="flex items-center gap-1">
@@ -261,6 +316,29 @@ export function ScheduleModal({ isOpen, onClose, selectedRecordIds }: ScheduleMo
               </div>
 
               <div className="space-y-2 text-xs">
+                <div className="rounded-md border border-border bg-muted/20 p-3">
+                  <label className="block">
+                    <span className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                      <LinkIcon className="h-3.5 w-3.5 text-primary" />
+                      Job link for {currentPreview.record.contact.name || currentPreview.record.contact.email}
+                    </span>
+                    <input
+                      type="url"
+                      value={jobLinks[currentPreview.record.id] || ''}
+                      onChange={event =>
+                        setJobLinks(previous => ({
+                          ...previous,
+                          [currentPreview.record.id]: event.target.value,
+                        }))
+                      }
+                      placeholder="https://company.com/jobs/role"
+                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </label>
+                  <p className="mt-1.5 text-[10px] text-muted-foreground">
+                    This URL is used only for this recipient and becomes the clickable &#123;&#123;job_link&#125;&#125;.
+                  </p>
+                </div>
                 <div>
                   <span className="font-medium text-muted-foreground">Subject: </span>
                   <span className="font-semibold text-foreground">{currentPreview.subject}</span>
@@ -275,6 +353,25 @@ export function ScheduleModal({ isOpen, onClose, selectedRecordIds }: ScheduleMo
                 <div className="text-[11px] text-muted-foreground flex items-center gap-1">
                   <Sparkles className="h-3 w-3 text-primary" />
                   Attached resume: <span className="font-medium text-foreground">Resume_Engineering.pdf (145 KB)</span>
+                </div>
+                <div className="flex justify-end border-t border-border pt-3">
+                  <button
+                    type="button"
+                    onClick={handleSendCurrentNow}
+                    disabled={
+                      currentWasSentNow ||
+                      sendingRecordId === currentPreview.record.id ||
+                      currentPreview.hasMissing ||
+                      (templateUsesJobLink && !(jobLinks[currentPreview.record.id] || '').trim())
+                    }
+                    className="flex items-center gap-1.5 rounded-md bg-emerald-600 px-4 py-2 text-xs font-semibold text-white shadow hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {currentWasSentNow ? (
+                      <><CheckCircle className="h-3.5 w-3.5" /> Sent Now</>
+                    ) : (
+                      <><Send className="h-3.5 w-3.5" /> {sendingRecordId === currentPreview.record.id ? 'Sending...' : 'Send Now'}</>
+                    )}
+                  </button>
                 </div>
               </div>
             </div>
@@ -295,9 +392,13 @@ export function ScheduleModal({ isOpen, onClose, selectedRecordIds }: ScheduleMo
             </button>
             <button
               onClick={handleConfirmSchedule}
-              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90 transition-colors"
+              disabled={missingJobLinkCount > 0}
+              title={missingJobLinkCount > 0 ? 'Add a job link for every selected recipient before scheduling.' : undefined}
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow hover:bg-primary/90 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
             >
-              Confirm & Schedule {selectedRecordIds.length} Email{selectedRecordIds.length > 1 ? 's' : ''}
+              {remainingRecordIds.length === 0
+                ? 'Done'
+                : `Confirm & Schedule ${remainingRecordIds.length} Email${remainingRecordIds.length > 1 ? 's' : ''}`}
             </button>
           </div>
         </div>

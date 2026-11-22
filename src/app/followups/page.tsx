@@ -4,15 +4,16 @@ import React, { useState } from 'react';
 import { useMailDesk } from '@/context/MailDeskContext';
 import { formatDateTime } from '@/lib/utils';
 import { CalendarCheck, Clock, CheckCircle, Send, Mail } from 'lucide-react';
+import { FollowupPreviewModal } from '@/components/followups/FollowupPreviewModal';
 
 export default function FollowupsPage() {
-  const { followups, outreachRecords, templates, snoozeFollowup, completeFollowup, sendNowRecords, profile } =
+  const { followups, outreachRecords, templates, snoozeFollowup, completeFollowup, profile } =
     useMailDesk();
 
   const [activeTab, setActiveTab] = useState<'due' | 'completed'>('due');
   const [selectedReminderIds, setSelectedReminderIds] = useState<string[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
-  const [isSending, setIsSending] = useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
   const pendingReminders = followups.filter(f => f.status === 'pending' || f.status === 'snoozed');
   const completedReminders = followups.filter(f => f.status === 'completed');
@@ -33,31 +34,13 @@ export default function FollowupsPage() {
     );
   };
 
-  const sendSelectedFollowups = async () => {
-    if (!selectedTemplateId || selectedReminderIds.length === 0) return;
-
-    const recordIds = Array.from(
-      new Set(
-        pendingReminders
-          .filter(reminder => selectedReminderIds.includes(reminder.id))
-          .map(reminder => reminder.outreach_record_id)
-      )
-    );
-
-    if (recordIds.length === 0) return;
-
-    setIsSending(true);
-    try {
-      await sendNowRecords(recordIds, {
-        templateId: selectedTemplateId,
-        isFollowup: true,
-        followupDays: null,
-      });
-      setSelectedReminderIds([]);
-    } finally {
-      setIsSending(false);
-    }
-  };
+  const selectedRecordIds = Array.from(
+    new Set(
+      pendingReminders
+        .filter(reminder => selectedReminderIds.includes(reminder.id))
+        .map(reminder => reminder.outreach_record_id)
+    )
+  );
 
   return (
     <div className="p-6 space-y-6 max-w-7xl mx-auto">
@@ -126,12 +109,12 @@ export default function FollowupsPage() {
 
               <button
                 type="button"
-                onClick={sendSelectedFollowups}
-                disabled={!selectedTemplateId || selectedReminderIds.length === 0 || isSending}
+                onClick={() => setIsPreviewOpen(true)}
+                disabled={!selectedTemplateId || selectedReminderIds.length === 0}
                 className="flex items-center justify-center gap-1.5 rounded-md bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground shadow transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Send className="h-3.5 w-3.5" />
-                {isSending ? 'Sending...' : `Reply with Follow-up (${selectedReminderIds.length})`}
+                Preview Follow-up ({selectedReminderIds.length})
               </button>
             </div>
           </div>
@@ -228,6 +211,14 @@ export default function FollowupsPage() {
           );
         })}
       </div>
+
+      <FollowupPreviewModal
+        isOpen={isPreviewOpen}
+        recordIds={selectedRecordIds}
+        templateId={selectedTemplateId}
+        onClose={() => setIsPreviewOpen(false)}
+        onSent={() => setSelectedReminderIds([])}
+      />
     </div>
   );
 }
