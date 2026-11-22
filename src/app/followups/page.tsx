@@ -1,24 +1,49 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useMailDesk } from '@/context/MailDeskContext';
 import { formatDateTime } from '@/lib/utils';
-import { CalendarCheck, Clock, CheckCircle, Send, Mail } from 'lucide-react';
+import { CalendarCheck, Clock, CheckCircle, Send, Mail, GitBranchPlus } from 'lucide-react';
 import { FollowupPreviewModal } from '@/components/followups/FollowupPreviewModal';
+import { format, startOfDay, subDays } from 'date-fns';
 
 export default function FollowupsPage() {
-  const { followups, outreachRecords, templates, snoozeFollowup, completeFollowup, profile } =
+  const { followups, outreachRecords, templates, messages, snoozeFollowup, completeFollowup, createNextFollowup, profile } =
     useMailDesk();
 
   const [activeTab, setActiveTab] = useState<'due' | 'completed'>('due');
   const [selectedReminderIds, setSelectedReminderIds] = useState<string[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [selectedFollowupDate, setSelectedFollowupDate] = useState('all');
 
-  const pendingReminders = followups.filter(f => f.status === 'pending' || f.status === 'snoozed');
-  const completedReminders = followups.filter(f => f.status === 'completed');
+  const followupDateTabs = useMemo(
+    () =>
+      Array.from({ length: 10 }, (_, index) => {
+        const date = subDays(new Date(), index);
+        return { value: format(date, 'yyyy-MM-dd'), label: format(date, 'd MMM') };
+      }),
+    []
+  );
+  const tenDayStart = startOfDay(subDays(new Date(), 9)).getTime();
+  const getOutreachForReminder = (reminder: (typeof followups)[number]) =>
+    outreachRecords.find(record => record.id === reminder.outreach_record_id) || reminder.outreach_record;
+  const recentFollowups = followups.filter(reminder => {
+    const outreach = getOutreachForReminder(reminder);
+    const activityDate = outreach?.sent_at || reminder.created_at;
+    return new Date(activityDate).getTime() >= tenDayStart;
+  });
+  const pendingReminders = recentFollowups.filter(f => f.status === 'pending' || f.status === 'snoozed');
+  const completedReminders = recentFollowups.filter(f => f.status === 'completed');
+  const filterBySelectedDate = (reminder: (typeof followups)[number]) => {
+    if (selectedFollowupDate === 'all') return true;
+    const outreach = getOutreachForReminder(reminder);
+    return format(new Date(outreach?.sent_at || reminder.created_at), 'yyyy-MM-dd') === selectedFollowupDate;
+  };
+  const visiblePendingReminders = pendingReminders.filter(filterBySelectedDate);
+  const visibleCompletedReminders = completedReminders.filter(filterBySelectedDate);
   const allPendingSelected =
-    pendingReminders.length > 0 && pendingReminders.every(reminder => selectedReminderIds.includes(reminder.id));
+    visiblePendingReminders.length > 0 && visiblePendingReminders.every(reminder => selectedReminderIds.includes(reminder.id));
 
   const toggleReminder = (reminderId: string) => {
     setSelectedReminderIds(previous =>
@@ -30,7 +55,7 @@ export default function FollowupsPage() {
 
   const toggleAllPending = () => {
     setSelectedReminderIds(
-      allPendingSelected ? [] : pendingReminders.map(reminder => reminder.id)
+      allPendingSelected ? [] : visiblePendingReminders.map(reminder => reminder.id)
     );
   };
 
@@ -72,9 +97,39 @@ export default function FollowupsPage() {
               activeTab === 'completed' ? 'bg-card text-foreground shadow-sm' : 'text-muted-foreground'
             }`}
           >
-            Completed ({completedReminders.length})
+            Sent History ({completedReminders.length})
           </button>
         </div>
+      </div>
+
+      <div className="flex items-center gap-1.5 overflow-x-auto rounded-lg border border-border bg-card p-2 text-xs">
+        <button
+          onClick={() => { setSelectedFollowupDate('all'); setSelectedReminderIds([]); }}
+          className={`whitespace-nowrap rounded-md px-3 py-1.5 font-medium ${
+            selectedFollowupDate === 'all' ? 'bg-primary text-primary-foreground' : 'bg-muted/60 text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          Last 10 Days ({recentFollowups.length})
+        </button>
+        {followupDateTabs.map(dateTab => {
+          const count = recentFollowups.filter(reminder => {
+            const outreach = getOutreachForReminder(reminder);
+            return format(new Date(outreach?.sent_at || reminder.created_at), 'yyyy-MM-dd') === dateTab.value;
+          }).length;
+          return (
+            <button
+              key={dateTab.value}
+              onClick={() => { setSelectedFollowupDate(dateTab.value); setSelectedReminderIds([]); }}
+              className={`whitespace-nowrap rounded-md px-3 py-1.5 font-medium ${
+                selectedFollowupDate === dateTab.value
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted/60 text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {dateTab.label} ({count})
+            </button>
+          );
+        })}
       </div>
 
       {activeTab === 'due' && (
@@ -86,7 +141,7 @@ export default function FollowupsPage() {
                 Send follow-ups
               </h2>
               <p className="mt-1 text-xs text-muted-foreground">
-                Select reminders and a template. Each follow-up is sent as a reply in its original Gmail thread.
+                MailDesk first replies in the original Gmail thread; if Gmail cannot recover it, the follow-up is sent as a new email.
               </p>
             </div>
 
@@ -119,7 +174,7 @@ export default function FollowupsPage() {
             </div>
           </div>
 
-          {pendingReminders.length > 0 && (
+          {visiblePendingReminders.length > 0 && (
             <label className="mt-3 inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-foreground">
               <input
                 type="checkbox"
@@ -135,16 +190,30 @@ export default function FollowupsPage() {
 
       {/* Reminders List */}
       <div className="space-y-3">
-        {activeTab === 'due' && pendingReminders.length === 0 && (
+        {activeTab === 'due' && visiblePendingReminders.length === 0 && (
           <div className="rounded-xl border border-border bg-card p-12 text-center text-xs text-muted-foreground">
             No follow-ups currently due. Great job keeping up with your outreach!
           </div>
         )}
+        {activeTab === 'completed' && visibleCompletedReminders.length === 0 && (
+          <div className="rounded-xl border border-border bg-card p-12 text-center text-xs text-muted-foreground">
+            No sent follow-ups in the selected period yet.
+          </div>
+        )}
 
-        {(activeTab === 'due' ? pendingReminders : completedReminders).map(fol => {
+        {(activeTab === 'due' ? visiblePendingReminders : visibleCompletedReminders).map(fol => {
           const outreach =
             outreachRecords.find(record => record.id === fol.outreach_record_id) || fol.outreach_record;
           const contact = outreach?.contact;
+          const originalMessage = messages
+            .filter(message => message.outreach_record_id === fol.outreach_record_id && message.direction === 'outgoing')
+            .sort((a, b) => new Date(a.sent_at || a.created_at).getTime() - new Date(b.sent_at || b.created_at).getTime())[0];
+          const originalTemplateName =
+            originalMessage?.template_name ||
+            templates.find(template => template.id === originalMessage?.client_template_id)?.name ||
+            outreach?.template?.name ||
+            templates.find(template => template.id === outreach?.template_id)?.name ||
+            'Unknown template';
 
           return (
             <div
@@ -166,8 +235,15 @@ export default function FollowupsPage() {
                   <span className="font-semibold text-sm text-foreground">
                     {contact?.name || contact?.email || 'Candidate Outreach'}
                   </span>
-                  <span className="rounded-full bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300 px-2 py-0.5 text-[10px] font-semibold">
-                    Follow-up Due
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                    activeTab === 'completed'
+                      ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                      : 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
+                  }`}>
+                    {activeTab === 'completed' ? 'Follow-up Sent' : 'Follow-up Due'}
+                  </span>
+                  <span className="rounded-full bg-violet-100 px-2 py-0.5 text-[10px] font-bold text-violet-700 dark:bg-violet-950 dark:text-violet-300">
+                    Sequence #{fol.sequence_number || 1}
                   </span>
                 </div>
                 <div className="text-xs text-muted-foreground">
@@ -176,6 +252,9 @@ export default function FollowupsPage() {
                 <div className="text-[11px] text-muted-foreground flex items-center gap-1.5 pt-1">
                   <Clock className="h-3 w-3 text-amber-500" />
                   Target due date: <span className="font-medium text-foreground">{formatDateTime(fol.due_at)}</span>
+                </div>
+                <div className="text-[11px] text-muted-foreground">
+                  Original template: <span className="font-medium text-foreground">{originalTemplateName}</span>
                 </div>
                 </div>
               </div>
@@ -204,6 +283,21 @@ export default function FollowupsPage() {
                   >
                     <CheckCircle className="h-3.5 w-3.5" />
                     Mark Done
+                  </button>
+                </div>
+              )}
+              {activeTab === 'completed' && (
+                <div className="flex flex-col items-end gap-2 shrink-0">
+                  <div className="text-[11px] text-muted-foreground">
+                    Sent: {fol.completed_at ? formatDateTime(fol.completed_at) : 'Recorded as completed'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void createNextFollowup(fol.id, 3)}
+                    className="flex items-center gap-1.5 rounded-md border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700 transition-colors hover:bg-violet-100 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-300"
+                  >
+                    <GitBranchPlus className="h-3.5 w-3.5" />
+                    Create Follow-up #{(fol.sequence_number || 1) + 1}
                   </button>
                 </div>
               )}

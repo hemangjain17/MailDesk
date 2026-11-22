@@ -3,6 +3,7 @@ import { getGoogleOAuth2Client } from '@/lib/gmail';
 import { encryptToken } from '@/lib/crypto';
 import { getSupabaseAdmin } from '@/lib/supabase/admin';
 import { google } from 'googleapis';
+import { createSessionToken, SESSION_COOKIE } from '@/lib/session';
 
 export async function GET(req: NextRequest) {
   try {
@@ -97,7 +98,17 @@ export async function GET(req: NextRequest) {
     redirectUrl.searchParams.set('name', name);
     if (userId) redirectUrl.searchParams.set('user_id', userId);
 
-    return NextResponse.redirect(redirectUrl);
+    const response = NextResponse.redirect(redirectUrl);
+    if (userId) {
+      response.cookies.set(SESSION_COOKIE, createSessionToken(userId), {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 30 * 24 * 60 * 60,
+      });
+    }
+    return response;
   } catch (err: any) {
     console.error('Google OAuth callback error:', err);
     return NextResponse.redirect(new URL('/contacts?error=' + encodeURIComponent(err.message), req.url));

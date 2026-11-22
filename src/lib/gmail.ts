@@ -98,17 +98,15 @@ export function buildRawMimeMessage(options: ComposeEmailOptions): string {
 
 /**
  * Resolves the active base URL for OAuth callbacks and links.
- * Checks NEXT_PUBLIC_APP_URL, Vercel production URL, Vercel deployment URL, or falls back to localhost.
+ * Uses the explicitly configured public URL in production and localhost only
+ * while running the local development server.
  */
 export function getAppUrl(): string {
   if (process.env.NEXT_PUBLIC_APP_URL) {
     return process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, '');
   }
-  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
-    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
-  }
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('NEXT_PUBLIC_APP_URL must be configured for a production deployment');
   }
   return 'http://localhost:3000';
 }

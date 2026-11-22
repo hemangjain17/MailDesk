@@ -4,38 +4,36 @@ import { decryptToken } from '@/lib/crypto';
 import { buildRawMimeMessage, getGoogleOAuth2Client } from '@/lib/gmail';
 import { google } from 'googleapis';
 import { htmlToPlainText, normalizeTemplateHtml, sanitizeEmailHtml } from '@/lib/email-html';
+import { authorizeCronRequest } from '@/lib/cron-auth';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const authHeader = req.headers.get('authorization');
-    const cronSecret = process.env.CRON_SECRET;
-    const isVercelCron = req.headers.get('x-vercel-cron') === '1';
-
-    // Allow authorization via Bearer token OR Vercel Cron header OR internal app query param ?secret=... OR local development
-    const searchParams = req.nextUrl.searchParams;
-    const querySecret = searchParams.get('secret');
-
-    if (
-      cronSecret &&
-      !isVercelCron &&
-      authHeader !== `Bearer ${cronSecret}` &&
-      querySecret !== cronSecret &&
-      req.headers.get('host') !== 'localhost:3000' &&
-      !req.headers.get('host')?.startsWith('127.0.0.1')
-    ) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const unauthorized = authorizeCronRequest(req);
+    if (unauthorized) return unauthorized;
 
     const supabaseAdmin = getSupabaseAdmin();
 
-    // Query due scheduled emails using service_role to bypass RLS
-    const nowIso = new Date().toISOString();
-    const { data: dueJobs, error: queryError } = await supabaseAdmin
-      .from('scheduled_emails')
-      .select('*, outreach_record:outreach_records(*, contact:contacts(*)), account:email_accounts(*)')
-      .in('status', ['pending', 'locked'])
-      .lte('scheduled_at', nowIso)
-      .limit(25);
+    // Atomically claim due jobs so overlapping AWS invocations cannot send twice.
+    const { data: claimedJobs, error: claimError } = await supabaseAdmin.rpc(
+      'claim_due_scheduled_emails',
+      { p_batch_size: 25, p_lease_seconds: 300 }
+    );
+
+    if (claimError) {
+      console.error('Failed to claim scheduled emails:', claimError);
+      return NextResponse.json({ error: claimError.message }, { status: 500 });
+    }
+
+    const claimedIds = (claimedJobs || []).map((job: { job_id: string }) => job.job_id);
+    const { data: dueJobs, error: queryError } = claimedIds.length
+      ? await supabaseAdmin
+          .from('scheduled_emails')
+          .select('*, outreach_record:outreach_records(*, contact:contacts(*)), account:email_accounts(*)')
+          .in('id', claimedIds)
+      : { data: [], error: null };
 
     if (queryError) {
       console.error('Failed to query due scheduled emails:', queryError);
@@ -53,17 +51,6 @@ export async function POST(req: NextRequest) {
     if (dueJobs && dueJobs.length > 0) {
       for (const job of dueJobs) {
         results.processed++;
-
-        // Lock job
-        await supabaseAdmin
-          .from('scheduled_emails')
-          .update({
-            status: 'locked',
-            locked_until: new Date(Date.now() + 5 * 60000).toISOString(),
-            attempt_count: (job.attempt_count || 0) + 1,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', job.id);
 
         try {
           const account = job.account;
@@ -148,6 +135,25 @@ export async function POST(req: NextRequest) {
                 updated_at: new Date().toISOString(),
               })
               .eq('id', job.outreach_record_id);
+
+            const followupDays = job.outreach_record?.followup_days || 5;
+            const dueAt = new Date(Date.now() + followupDays * 24 * 60 * 60 * 1000).toISOString();
+            const { data: existingReminder } = await supabaseAdmin
+              .from('followup_reminders')
+              .select('id')
+              .eq('outreach_record_id', job.outreach_record_id)
+              .in('status', ['pending', 'snoozed'])
+              .limit(1)
+              .maybeSingle();
+            if (!existingReminder) {
+              await supabaseAdmin.from('followup_reminders').insert({
+                user_id: job.user_id,
+                outreach_record_id: job.outreach_record_id,
+                due_at: dueAt,
+                status: 'pending',
+                sequence_number: 1,
+              });
+            }
           }
 
           results.sent++;

@@ -179,7 +179,7 @@ export default function LandingPage() {
 
       {/* Footer */}
       <footer className="border-t border-border py-6 px-6 text-center text-xs text-muted-foreground">
-        MailDesk v1.0 — Personal Job Outreach Dashboard. Ready for Vercel deployment.
+        MailDesk v1.0 — Personal Job Outreach Dashboard. AWS cloud deployment ready.
       </footer>
     </div>
   );

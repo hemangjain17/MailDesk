@@ -104,6 +104,9 @@ export interface EmailMessage {
   gmail_message_id: string | null;
   gmail_thread_id: string | null;
   internet_message_id: string | null;
+  client_outreach_id?: string | null;
+  client_template_id?: string | null;
+  template_name?: string | null;
   sent_at: string | null;
   received_at: string | null;
   created_at: string;
@@ -142,6 +145,8 @@ export interface FollowupReminder {
   reminded_at: string | null;
   completed_at: string | null;
   created_at: string;
+  parent_reminder_id?: string | null;
+  sequence_number?: number;
   outreach_record?: OutreachRecord;
 }
 

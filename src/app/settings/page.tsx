@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, Suspense } from 'react';
 import { useMailDesk } from '@/context/MailDeskContext';
-import { Settings, Shield, Mail, Key, Globe, Check, RefreshCw, ExternalLink, RotateCcw, Sparkles } from 'lucide-react';
+import { Settings, Shield, Mail, Key, Globe, Check, LockKeyhole, ExternalLink, RotateCcw, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 
 function SettingsContent() {
@@ -43,20 +43,6 @@ function SettingsContent() {
 
   const handleConnectGoogle = () => {
     window.location.href = '/api/auth/google';
-  };
-
-  const handleTriggerSendWorker = async () => {
-    toast.info('Triggering background send worker test...');
-    setTimeout(() => {
-      toast.success('Durable send worker completed: checked queued jobs.');
-    }, 800);
-  };
-
-  const handleTriggerSyncWorker = async () => {
-    toast.info('Triggering Gmail history synchronizer...');
-    setTimeout(() => {
-      toast.success('Gmail sync completed: threads reconciled with zero errors.');
-    }, 800);
   };
 
   const isRealAccountConnected =
@@ -145,13 +131,10 @@ function SettingsContent() {
             </button>
           )}
 
-          <button
-            onClick={handleTriggerSyncWorker}
-            className="flex items-center gap-1 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted/80"
-          >
-            <RefreshCw className="h-3 w-3" />
-            Sync Threads Now
-          </button>
+          <span className="flex items-center gap-1 rounded-md bg-muted px-3 py-1.5 text-xs font-medium text-muted-foreground">
+            <LockKeyhole className="h-3 w-3" />
+            Inbox sync under development
+          </span>
         </div>
       </div>
 
@@ -244,34 +227,24 @@ function SettingsContent() {
       <div className="rounded-xl border border-border bg-card p-5 space-y-3 text-xs shadow-sm">
         <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
           <Shield className="h-4 w-4 text-primary" />
-          Durable Cron Worker Endpoints (Supabase / Vercel Cron)
+          AWS Background Worker
         </h2>
         <p className="text-muted-foreground leading-relaxed">
-          These server-side endpoints can be pinged by Supabase pg_cron, Vercel Cron, or an external webhook using{' '}
-          <code className="bg-muted px-1 py-0.5 rounded font-mono">Authorization: Bearer CRON_SECRET</code>:
+          AWS Lambda and EventBridge invoke these protected endpoints using{' '}
+          <code className="bg-muted px-1 py-0.5 rounded font-mono">Authorization: Bearer CRON_SECRET</code>.
         </p>
         <div className="space-y-2 font-mono text-[11px] bg-muted/40 p-3 rounded-lg border border-border">
           <div className="flex items-center justify-between">
             <span>POST /api/cron/send-scheduled</span>
-            <button
-              onClick={handleTriggerSendWorker}
-              className="font-sans text-[11px] text-primary hover:underline"
-            >
-              Test Run
-            </button>
+            <span className="font-sans text-[11px] text-muted-foreground">Every minute</span>
           </div>
           <div className="flex items-center justify-between">
-            <span>POST /api/cron/sync-gmail</span>
-            <button
-              onClick={handleTriggerSyncWorker}
-              className="font-sans text-[11px] text-primary hover:underline"
-            >
-              Test Run
-            </button>
+            <span>Replies / Inbox synchronization</span>
+            <span className="font-sans text-[11px] text-amber-600">Paused</span>
           </div>
           <div className="flex items-center justify-between">
             <span>POST /api/cron/check-followups</span>
-            <span className="font-sans text-[11px] text-muted-foreground">Every 6 hours</span>
+            <span className="font-sans text-[11px] text-muted-foreground">Every 15 minutes</span>
           </div>
         </div>
       </div>

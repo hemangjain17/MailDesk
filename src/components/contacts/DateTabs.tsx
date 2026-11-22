@@ -22,7 +22,9 @@ export function DateTabs() {
     return outreachRecords.filter(r => r.date_group_id === groupId).length;
   };
 
-  const totalAllCount = outreachRecords.length;
+  const totalAllCount = new Set(
+    outreachRecords.map(record => record.contact.email.trim().toLowerCase()).filter(Boolean)
+  ).size;
 
   return (
     <div className="flex items-center gap-1.5 border-b border-border bg-card/60 px-4 py-2 overflow-x-auto text-xs select-none">

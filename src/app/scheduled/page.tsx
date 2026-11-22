@@ -1,14 +1,12 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { useMailDesk } from '@/context/MailDeskContext';
 import { formatDateTime } from '@/lib/utils';
-import { Clock, Trash2, Send, AlertTriangle, RefreshCw, XCircle } from 'lucide-react';
-import { toast } from 'sonner';
+import { Clock, Trash2, AlertTriangle, RefreshCw, XCircle, Cloud } from 'lucide-react';
 
 export default function ScheduledPage() {
-  const { scheduledEmails, cancelScheduledJob, profile, emailAccount, processDueEmails } = useMailDesk();
-  const [isProcessing, setIsProcessing] = useState(false);
+  const { scheduledEmails, cancelScheduledJob, profile, emailAccount } = useMailDesk();
 
   // Split scheduled emails by status
   const pendingJobs = useMemo(
@@ -20,25 +18,6 @@ export default function ScheduledPage() {
     () => scheduledEmails.filter(j => j.status === 'failed'),
     [scheduledEmails]
   );
-
-  const handleProcessDueNow = async () => {
-    setIsProcessing(true);
-    toast.info('Sending due emails via Gmail API...');
-    try {
-      const res = await processDueEmails(true);
-      if (res.sent > 0) {
-        toast.success(`Successfully sent ${res.sent} email(s) via Gmail! Moved to Sent.`);
-      } else if (res.failed > 0) {
-        toast.error(`${res.failed} email(s) failed delivery. Check the error list below.`);
-      } else {
-        toast.info('No pending emails are currently due for sending.');
-      }
-    } catch (e: any) {
-      toast.error(`Worker error: ${e.message}`);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -70,14 +49,10 @@ export default function ScheduledPage() {
           <div className="rounded-lg border border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
             Queue timezone: <span className="font-semibold text-foreground">{profile.timezone}</span>
           </div>
-          <button
-            onClick={handleProcessDueNow}
-            disabled={isProcessing}
-            className="flex items-center gap-1.5 rounded-md bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors shadow-sm"
-          >
-            <Send className="h-3.5 w-3.5" />
-            <span>{isProcessing ? 'Processing...' : 'Send Due Emails Now'}</span>
-          </button>
+          <div className="flex items-center gap-1.5 rounded-md bg-emerald-50 px-3.5 py-1.5 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300">
+            <Cloud className="h-3.5 w-3.5" />
+            AWS worker active
+          </div>
         </div>
       </div>
 

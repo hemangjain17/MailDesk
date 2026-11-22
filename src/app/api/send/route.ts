@@ -4,9 +4,12 @@ import { decryptToken } from '@/lib/crypto';
 import { buildRawMimeMessage, getGoogleOAuth2Client } from '@/lib/gmail';
 import { google } from 'googleapis';
 import { normalizeTemplateHtml, sanitizeEmailHtml } from '@/lib/email-html';
+import { requireSession } from '@/lib/session';
 
 export async function POST(req: NextRequest) {
   try {
+    const session = requireSession(req);
+    if (session.error) return session.error;
     const body = await req.json();
     const {
       to,
@@ -18,6 +21,13 @@ export async function POST(req: NextRequest) {
       replyToMessageId,
       replyToThreadId,
       originalSubject: clientOriginalSubject,
+      templateId,
+      templateName,
+      recipientName,
+      company,
+      position,
+      jobLink,
+      followupDays,
     } = body;
 
     if (!to || !subject || !textBody) {
@@ -33,6 +43,7 @@ export async function POST(req: NextRequest) {
     const { data: accounts, error: accErr } = await supabaseAdmin
       .from('email_accounts')
       .select('*')
+      .eq('user_id', session.userId)
       .eq('connection_status', 'connected')
       .order('updated_at', { ascending: false })
       .limit(1);
@@ -63,6 +74,65 @@ export async function POST(req: NextRequest) {
     let replyThreadId: string | undefined;
     let inReplyTo: string | undefined;
     let references: string | undefined;
+    let threadFallbackReason: string | null = null;
+    const isUuid = (value: unknown): value is string =>
+      typeof value === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
+    let persistedOutreachId: string | null = isUuid(outreachRecordId) ? outreachRecordId : null;
+    if (!persistedOutreachId && outreachRecordId) {
+      const { data: correlatedOutreach } = await supabaseAdmin
+        .from('outreach_records')
+        .select('id')
+        .eq('user_id', account.user_id)
+        .eq('client_outreach_id', outreachRecordId)
+        .maybeSingle();
+      persistedOutreachId = correlatedOutreach?.id || null;
+    }
+
+    if (!persistedOutreachId) {
+      const normalizedEmail = String(to).trim().toLowerCase();
+      let { data: contact, error: contactLookupError } = await supabaseAdmin
+        .from('contacts')
+        .select('*')
+        .eq('user_id', account.user_id)
+        .ilike('email', normalizedEmail)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (contactLookupError) throw contactLookupError;
+
+      if (!contact) {
+        const { data: createdContact, error: contactError } = await supabaseAdmin
+          .from('contacts')
+          .insert({
+            user_id: account.user_id,
+            email: normalizedEmail,
+            name: recipientName || null,
+            company: company || null,
+            position: position || null,
+          })
+          .select()
+          .single();
+        if (contactError) throw contactError;
+        contact = createdContact;
+      }
+
+      const { data: createdOutreach, error: outreachError } = await supabaseAdmin
+        .from('outreach_records')
+        .insert({
+          user_id: account.user_id,
+          contact_id: contact.id,
+          client_outreach_id: outreachRecordId || null,
+          current_status: 'Draft',
+          job_link: jobLink || null,
+          followup_days: followupDays || 5,
+        })
+        .select()
+        .single();
+      if (outreachError) throw outreachError;
+      persistedOutreachId = createdOutreach.id;
+    }
 
     if (replyToOriginal) {
       if (!outreachRecordId) {
@@ -72,14 +142,28 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const { data: storedOriginalMessage, error: originalError } = await supabaseAdmin
+      let storedOriginalMessage: any = null;
+      let originalError: any = null;
+      const originalQuery = supabaseAdmin
         .from('email_messages')
-        .select('gmail_message_id, gmail_thread_id, internet_message_id, subject')
-        .eq('outreach_record_id', outreachRecordId)
+        .select('gmail_message_id, gmail_thread_id, internet_message_id, subject, client_template_id, template_name')
         .eq('direction', 'outgoing')
         .order('sent_at', { ascending: true })
-        .limit(1)
-        .maybeSingle();
+        .limit(1);
+
+      if (persistedOutreachId) {
+        const result = await originalQuery.eq('outreach_record_id', persistedOutreachId).maybeSingle();
+        storedOriginalMessage = result.data;
+        originalError = result.error;
+      } else {
+        const result = await originalQuery.eq('client_outreach_id', outreachRecordId).maybeSingle();
+        storedOriginalMessage = result.data;
+        originalError = result.error;
+      }
+
+      if (originalError) {
+        console.warn('Original message database lookup failed; trying Gmail fallback:', originalError.message);
+      }
 
       const originalMessage = storedOriginalMessage?.gmail_message_id
         ? storedOriginalMessage
@@ -92,14 +176,9 @@ export async function POST(req: NextRequest) {
             }
           : null;
 
-      if (originalError || !originalMessage?.gmail_message_id) {
-        return NextResponse.json(
-          { error: 'The original sent Gmail message could not be found. Follow-up was not sent as a new email.' },
-          { status: 409 }
-        );
-      }
-
-      try {
+      if (!originalMessage?.gmail_message_id) {
+        threadFallbackReason = 'The original Gmail message record could not be found.';
+      } else try {
         const originalMetadata = await gmail.users.messages.get({
           userId: 'me',
           id: originalMessage.gmail_message_id,
@@ -126,10 +205,10 @@ export async function POST(req: NextRequest) {
         effectiveSubject = /^re:/i.test(originalSubject) ? originalSubject : `Re: ${originalSubject}`;
       } catch (metadataError) {
         console.error('Could not load original Gmail metadata:', metadataError);
-        return NextResponse.json(
-          { error: 'The original Gmail message is unavailable. Follow-up was not sent as a new email.' },
-          { status: 409 }
-        );
+        threadFallbackReason = 'The original Gmail thread metadata was unavailable.';
+        replyThreadId = undefined;
+        inReplyTo = undefined;
+        references = undefined;
       }
     }
 
@@ -173,12 +252,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Log in Supabase email_messages
-    const { data: insertedMsg } = await supabaseAdmin
-      .from('email_messages')
-      .insert({
+    // Log in Supabase email_messages. Client-generated outreach IDs are stored
+    // separately because the relational outreach_record_id column requires UUIDs.
+    const messagePayload = {
         user_id: account.user_id,
-        outreach_record_id: outreachRecordId || null,
+        outreach_record_id: persistedOutreachId,
+        client_outreach_id: outreachRecordId || null,
+        client_template_id: templateId || null,
+        template_name: templateName || null,
         email_account_id: account.id,
         direction: 'outgoing',
         sender_email: account.email_address,
@@ -190,11 +271,23 @@ export async function POST(req: NextRequest) {
         gmail_thread_id: gmailThreadId,
         internet_message_id: internetMessageId,
         sent_at: new Date().toISOString(),
-      })
-      .select()
-      .single();
+      };
+    const { error: messageLogError } = await supabaseAdmin
+      .from('email_messages')
+      .insert(messagePayload);
 
-    if (outreachRecordId) {
+    if (messageLogError) {
+      console.error('Gmail sent successfully but message history logging failed:', messageLogError);
+      // Keep basic history working before the correlation migration is applied.
+      const { client_outreach_id, client_template_id, template_name, ...legacyPayload } = messagePayload;
+      const { error: legacyLogError } = await supabaseAdmin.from('email_messages').insert(legacyPayload);
+      if (legacyLogError) {
+        console.error('Legacy message history logging also failed:', legacyLogError);
+      }
+    }
+
+    let createdFollowupReminder: any = null;
+    if (persistedOutreachId) {
       await supabaseAdmin
         .from('outreach_records')
         .update({
@@ -202,7 +295,34 @@ export async function POST(req: NextRequest) {
           sent_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
-        .eq('id', outreachRecordId);
+        .eq('id', persistedOutreachId);
+
+      if (!replyToOriginal && followupDays) {
+        const dueAt = new Date(Date.now() + Number(followupDays) * 24 * 60 * 60 * 1000).toISOString();
+        const { data: existingReminder } = await supabaseAdmin
+          .from('followup_reminders')
+          .select('*')
+          .eq('outreach_record_id', persistedOutreachId)
+          .in('status', ['pending', 'snoozed'])
+          .limit(1)
+          .maybeSingle();
+        if (existingReminder) {
+          createdFollowupReminder = existingReminder;
+        } else {
+          const { data: insertedReminder } = await supabaseAdmin
+            .from('followup_reminders')
+            .insert({
+              user_id: account.user_id,
+              outreach_record_id: persistedOutreachId,
+              due_at: dueAt,
+              status: 'pending',
+              sequence_number: 1,
+            })
+            .select()
+            .single();
+          createdFollowupReminder = insertedReminder;
+        }
+      }
     }
 
     return NextResponse.json({
@@ -213,7 +333,13 @@ export async function POST(req: NextRequest) {
       gmailThreadId,
       internetMessageId,
       subject: effectiveSubject,
+      sentAsNewMessage: Boolean(replyToOriginal && !replyThreadId),
+      threadFallbackReason,
+      templateId: templateId || null,
+      templateName: templateName || null,
       sentAt: new Date().toISOString(),
+      outreachRecordId: persistedOutreachId,
+      followupReminder: createdFollowupReminder,
     });
   } catch (error: any) {
     console.error('Error sending email via Gmail API:', error);

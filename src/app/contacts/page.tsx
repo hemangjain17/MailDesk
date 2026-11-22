@@ -11,7 +11,7 @@ import { OutreachRecord, OutreachStatus } from '@/types';
 import { Plus, Upload, Search, Filter, Maximize2, Minimize2, ExternalLink } from 'lucide-react';
 
 export default function ContactsPage() {
-  const { outreachRecords, selectedDateId, addSingleRow } = useMailDesk();
+  const { outreachRecords, dateGroups, selectedDateId, addSingleRow } = useMailDesk();
 
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('');
@@ -51,11 +51,31 @@ export default function ContactsPage() {
 
   // Filter records by Date Tab, Search query, and Status
   const filteredRecords = useMemo(() => {
-    return outreachRecords.filter(rec => {
-      // Date tab filter
-      if (selectedDateId !== 'all' && rec.date_group_id !== selectedDateId) {
-        return false;
-      }
+    let recordsForView: OutreachRecord[];
+
+    if (selectedDateId === 'all') {
+      const dateByGroupId = new Map(dateGroups.map(group => [group.id, group.group_date]));
+      const newestFirst = [...outreachRecords].sort((a, b) => {
+        const sentComparison =
+          new Date(b.sent_at || 0).getTime() - new Date(a.sent_at || 0).getTime();
+        if (sentComparison) return sentComparison;
+        const dateComparison = (dateByGroupId.get(b.date_group_id || '') || '').localeCompare(
+          dateByGroupId.get(a.date_group_id || '') || ''
+        );
+        return dateComparison || new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      });
+      const seenEmails = new Set<string>();
+      recordsForView = newestFirst.filter(record => {
+        const email = record.contact.email.trim().toLowerCase();
+        if (!email || seenEmails.has(email)) return false;
+        seenEmails.add(email);
+        return true;
+      });
+    } else {
+      recordsForView = outreachRecords.filter(record => record.date_group_id === selectedDateId);
+    }
+
+    return recordsForView.filter(rec => {
 
       // Status filter
       if (statusFilter !== 'all' && rec.current_status !== statusFilter) {
@@ -75,7 +95,7 @@ export default function ContactsPage() {
 
       return true;
     });
-  }, [outreachRecords, selectedDateId, statusFilter, searchQuery]);
+  }, [outreachRecords, dateGroups, selectedDateId, statusFilter, searchQuery]);
 
   return (
     <div className="flex flex-col h-full bg-background select-none">

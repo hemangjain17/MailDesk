@@ -4,23 +4,15 @@ import { decryptToken } from '@/lib/crypto';
 import { getGoogleOAuth2Client } from '@/lib/gmail';
 import { extractNameAndEmail } from '@/lib/parser';
 import { google } from 'googleapis';
+import { authorizeCronRequest } from '@/lib/cron-auth';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const authHeader = req.headers.get('authorization');
-    const cronSecret = process.env.CRON_SECRET;
-    const isVercelCron = req.headers.get('x-vercel-cron') === '1';
-
-    if (
-      cronSecret &&
-      !isVercelCron &&
-      authHeader !== `Bearer ${cronSecret}` &&
-      req.nextUrl.searchParams.get('secret') !== cronSecret &&
-      req.headers.get('host') !== 'localhost:3000' &&
-      !req.headers.get('host')?.startsWith('127.0.0.1')
-    ) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const unauthorized = authorizeCronRequest(req);
+    if (unauthorized) return unauthorized;
 
     const supabaseAdmin = getSupabaseAdmin();
 

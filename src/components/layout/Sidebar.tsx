@@ -18,14 +18,22 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useMailDesk } from '@/context/MailDeskContext';
+import { startOfDay, subDays } from 'date-fns';
 
 export function Sidebar() {
   const pathname = usePathname();
   const [isCollapsed, setIsCollapsed] = React.useState(false);
-  const { outreachRecords, scheduledEmails, messages, followups, notifications } = useMailDesk();
+  const { outreachRecords, scheduledEmails, messages, followups } = useMailDesk();
 
-  const unreadReplies = notifications.filter(n => n.type === 'reply_received' && !n.is_read).length;
-  const followupsDue = outreachRecords.filter(r => r.current_status === 'Follow-up Due').length;
+  const tenDayStart = startOfDay(subDays(new Date(), 9)).getTime();
+  const followupsDue = followups.filter(reminder => {
+    if (reminder.status !== 'pending' && reminder.status !== 'snoozed') return false;
+    const outreach = outreachRecords.find(record => record.id === reminder.outreach_record_id) || reminder.outreach_record;
+    return new Date(outreach?.sent_at || reminder.created_at).getTime() >= tenDayStart;
+  }).length;
+  const uniqueContactCount = new Set(
+    outreachRecords.map(record => record.contact.email.trim().toLowerCase()).filter(Boolean)
+  ).size;
   const pendingScheduled = scheduledEmails.filter(s => s.status === 'pending' || s.status === 'locked').length;
   const sentCount = messages.filter(m => m.direction === 'outgoing').length + scheduledEmails.filter(s => s.status === 'sent').length;
 
@@ -35,7 +43,7 @@ export function Sidebar() {
       label: 'All Contacts',
       href: '/contacts',
       icon: Users,
-      badge: outreachRecords.length > 0 ? outreachRecords.length : undefined,
+      badge: uniqueContactCount > 0 ? uniqueContactCount : undefined,
     },
     {
       label: 'Scheduled',
@@ -54,8 +62,8 @@ export function Sidebar() {
       label: 'Replies / Inbox',
       href: '/replies',
       icon: Inbox,
-      badge: unreadReplies > 0 ? unreadReplies : undefined,
-      badgeColor: 'bg-emerald-500 text-white',
+      badge: 'Locked',
+      badgeColor: 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
     },
     {
       label: 'Follow-ups',

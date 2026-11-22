@@ -1,0 +1,23 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - corepack enable
+        - corepack prepare pnpm@9.15.5 --activate
+        - pnpm install --frozen-lockfile
+    build:
+      commands:
+        # Amplify SSR compute does not automatically receive console build
+        # variables. Persist only this explicit allow-list for Next.js runtime.
+        - env | grep -E '^(GOOGLE_CLIENT_ID|GOOGLE_CLIENT_SECRET|GOOGLE_REDIRECT_URI|NEXT_PUBLIC_APP_URL|NEXT_PUBLIC_SUPABASE_URL|NEXT_PUBLIC_SUPABASE_ANON_KEY|SUPABASE_SERVICE_ROLE_KEY|CRON_SECRET|TOKEN_ENCRYPTION_KEY|DEFAULT_TIMEZONE)=' >> .env.production
+        - pnpm build
+  artifacts:
+    baseDirectory: .next
+    files:
+      - "**/*"
+  cache:
+    paths:
+      - .next/cache/**/*
+      - node_modules/**/*
+      - ~/.pnpm-store/**/*

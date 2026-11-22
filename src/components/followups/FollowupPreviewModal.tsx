@@ -71,6 +71,12 @@ export function FollowupPreviewModal({
         subject,
         body: body.renderedText,
         hasMissing: templateSubject.hasUnresolvedPlaceholders || body.hasUnresolvedPlaceholders,
+        originalTemplateName:
+          originalMessage?.template_name ||
+          templates.find(item => item.id === originalMessage?.client_template_id)?.name ||
+          record.template?.name ||
+          templates.find(item => item.id === record.template_id)?.name ||
+          'Unknown template',
       };
     });
   }, [selectedRecords, template, profile, jobLinks, messages]);
@@ -112,7 +118,7 @@ export function FollowupPreviewModal({
               Preview Follow-ups ({recordIds.length})
             </h2>
             <p className="mt-1 text-xs text-muted-foreground">
-              Review every recipient and provide their individual job link before replying.
+              Review every recipient and provide their individual job link. Missing Gmail threads safely fall back to a new email.
             </p>
           </div>
           <button onClick={onClose} className="rounded p-1 text-muted-foreground hover:bg-muted">
@@ -183,6 +189,10 @@ export function FollowupPreviewModal({
               <div className="text-xs">
                 <span className="font-medium text-muted-foreground">Subject: </span>
                 <span className="font-semibold text-foreground">{currentPreview.subject}</span>
+              </div>
+              <div className="text-xs">
+                <span className="font-medium text-muted-foreground">Originally sent with: </span>
+                <span className="font-semibold text-foreground">{currentPreview.originalTemplateName}</span>
               </div>
               <div>
                 <span className="mb-1 block text-xs font-medium text-muted-foreground">Rendered Message Body:</span>

@@ -11,10 +11,17 @@ interface BulkImportModalProps {
 }
 
 export function BulkImportModal({ isOpen, onClose }: BulkImportModalProps) {
-  const { importContacts, contacts, selectedDateId, dateGroups } = useMailDesk();
+  const { importContacts, outreachRecords, selectedDateId, dateGroups } = useMailDesk();
   const [rawText, setRawText] = useState('');
 
-  const existingEmails = useMemo(() => contacts.map(c => c.email), [contacts]);
+  const targetGroupId = selectedDateId === 'all' ? dateGroups[0]?.id : selectedDateId;
+  const existingEmails = useMemo(
+    () =>
+      outreachRecords
+        .filter(record => record.date_group_id === targetGroupId)
+        .map(record => record.contact.email),
+    [outreachRecords, targetGroupId]
+  );
 
   // Live preview parsing as user types/pastes
   const parseResult = useMemo(() => {
@@ -26,7 +33,6 @@ export function BulkImportModal({ isOpen, onClose }: BulkImportModalProps) {
 
   const handleImport = () => {
     if (!rawText.trim()) return;
-    const targetGroupId = selectedDateId === 'all' ? dateGroups[0]?.id : selectedDateId;
     const res = importContacts(rawText, targetGroupId);
     if (res.valid.length > 0) {
       setRawText('');

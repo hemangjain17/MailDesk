@@ -1,24 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
+import { getSupabaseAdmin } from '@/lib/supabase/admin';
+import { authorizeCronRequest } from '@/lib/cron-auth';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const authHeader = req.headers.get('authorization');
-    const cronSecret = process.env.CRON_SECRET;
-    const isVercelCron = req.headers.get('x-vercel-cron') === '1';
+    const unauthorized = authorizeCronRequest(req);
+    if (unauthorized) return unauthorized;
 
-    if (
-      cronSecret &&
-      !isVercelCron &&
-      authHeader !== `Bearer ${cronSecret}` &&
-      req.nextUrl.searchParams.get('secret') !== cronSecret &&
-      req.headers.get('host') !== 'localhost:3000' &&
-      !req.headers.get('host')?.startsWith('127.0.0.1')
-    ) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const supabase = await createClient();
+    // Cron requests have no browser session, so use the server-only service role.
+    const supabase = getSupabaseAdmin();
 
     // Find sent records that have not received replies and have passed followup due date
     const { data: dueRecords } = await supabase
@@ -45,6 +38,23 @@ export async function POST(req: NextRequest) {
               updated_at: new Date().toISOString(),
             })
             .eq('id', rec.id);
+
+          const { data: existingReminder } = await supabase
+            .from('followup_reminders')
+            .select('id')
+            .eq('outreach_record_id', rec.id)
+            .in('status', ['pending', 'snoozed'])
+            .limit(1)
+            .maybeSingle();
+          if (!existingReminder) {
+            await supabase.from('followup_reminders').insert({
+              user_id: rec.user_id,
+              outreach_record_id: rec.id,
+              due_at: new Date().toISOString(),
+              status: 'pending',
+              sequence_number: 1,
+            });
+          }
 
           // Create notification
           await supabase.from('notifications').insert({
